@@ -1,0 +1,177 @@
+"""Pydantic şemaları: API'nin giriş/çıkış sözleşmesi.
+
+Frontend yalnızca buradaki alanlara güvenmelidir; veritabanı kolon adları
+değişse bile bu sözleşme korunur.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+AiState = Literal["working", "idle", "stalled", "error"]
+ActivityStatus = Literal["running", "success", "failed", "skipped"]
+
+
+def as_utc(value: datetime | None) -> datetime | None:
+    """Naive zaman damgalarını UTC kabul eder (mevcut tablolar naive tutuyor)."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+class UtcModel(BaseModel):
+    """ORM nesnelerinden okunan zaman alanlarını UTC'ye sabitler.
+
+    Mevcut tablolar zaman dilimi taşımayan TIMESTAMP kullanıyor. Burada
+    doğrulama anında UTC etiketi eklenir; böylece hem JSON çıktısı `Z` ekli
+    olur hem de servis katmanındaki tarih karşılaştırmaları tutarlı çalışır.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("*", mode="after")
+    @classmethod
+    def _ensure_utc(cls, value: Any) -> Any:
+        if isinstance(value, datetime):
+            return as_utc(value)
+        return value
+
+
+# --- İstekler ---------------------------------------------------------------
+
+
+class CompanyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=500)
+    domain: str = Field(min_length=3, max_length=255)
+    website: str | None = None
+    industry: str | None = None
+    employee_count: int | None = Field(default=None, ge=0)
+    country: str | None = "Turkey"
+    city: str | None = None
+    linkedin_url: str | None = None
+    founded_year: int | None = Field(default=None, ge=1800, le=2100)
+
+    @field_validator("domain")
+    @classmethod
+    def _clean_domain(cls, value: str) -> str:
+        """`https://www.x.com/abc` gibi girdileri `x.com` haline getirir."""
+        cleaned = value.strip().lower()
+        for prefix in ("https://", "http://"):
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix) :]
+        cleaned = cleaned.removeprefix("www.").split("/", 1)[0].strip()
+        if not cleaned:
+            raise ValueError("Geçerli bir domain girin.")
+        return cleaned
+
+
+class CompanyResearchRequest(BaseModel):
+    company_id: str = Field(min_length=1, max_length=255)
+
+
+class CompanyAnalyzeRequest(BaseModel):
+    company_id: str = Field(min_length=1, max_length=255)
+    website_content: str = Field(min_length=1)
+
+
+# --- Yanıtlar ---------------------------------------------------------------
+
+
+class CompanyOut(UtcModel):
+    id: str
+    name: str | None
+    domain: str | None
+    website: str | None
+    industry: str | None
+    country: str | None
+    city: str | None
+    status: str | None
+
+    @field_validator("status", mode="after")
+    @classmethod
+    def _clean_status(cls, value: str | None) -> str | None:
+        """Bazı satırlarda status tırnakla kaydedilmiş ("'new'"); temizleyip döner."""
+        if value is None:
+            return None
+        return value.strip(" '\"\t\n\r").lower() or None
+    estimated_num_employees: int | None
+    founded_year: int | None
+    linkedin_url: str | None
+    logo_url: str | None
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+class CompanyListOut(BaseModel):
+    items: list[CompanyOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class ActivityOut(UtcModel):
+    id: int
+    event_type: str
+    status: ActivityStatus
+    message: str
+    company_id: str | None
+    company_name: str | None
+    detail: dict[str, Any] | None
+    duration_ms: int | None
+    created_at: datetime
+    finished_at: datetime | None
+
+
+class DashboardStats(BaseModel):
+    """Dashboard'un üst bölümündeki sayaçlar."""
+
+    total_companies: int
+    researched_companies: int
+    pending_companies: int
+    analyzed_companies: int
+    companies_added_today: int
+    companies_added_last_7_days: int
+    total_contacts: int
+    average_overall_score: float | None
+    high_intent_companies: int
+
+
+class AiStatus(BaseModel):
+    """"AI şu anda ne yapıyor?" bölümünün içeriği."""
+
+    state: AiState
+    headline: str
+    current: ActivityOut | None
+    recent: list[ActivityOut]
+
+
+class StatusCount(BaseModel):
+    status: str
+    count: int
+
+
+class IndustryCount(BaseModel):
+    industry: str
+    count: int
+
+
+class DashboardStatsResponse(BaseModel):
+    generated_at: datetime
+    stats: DashboardStats
+    ai_status: AiStatus
+    status_breakdown: list[StatusCount]
+    top_industries: list[IndustryCount]
+
+
+class HealthResponse(BaseModel):
+    status: Literal["ok", "degraded"]
+    service: str
+    environment: str
+    database: Literal["up", "down"]
+    database_host: str
+    version: str
