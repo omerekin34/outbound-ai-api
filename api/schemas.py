@@ -322,6 +322,8 @@ class DashboardStats(BaseModel):
     researched_companies: int
     pending_companies: int
     analyzed_companies: int
+    #: Step 19 — yalnızca `qualified` / `high priority`. low priority ve reject dahil değil.
+    suitable_companies: int
     companies_added_today: int
     companies_added_last_7_days: int
     total_contacts: int

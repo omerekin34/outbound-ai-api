@@ -31,7 +31,7 @@ from api.schemas import (
     StatusCount,
 )
 from api.services.inbox import count_positive_replies
-from api.services.scoring import QUALIFICATION_STATUSES
+from api.services.scoring import DEEP_RESEARCH_STATUSES, QUALIFICATION_STATUSES
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -78,6 +78,9 @@ def _company_counters(db: Session, now: datetime) -> DashboardStats:
             .filter(status.in_(ANALYZED_STATUSES))
             .label("analyzed"),
             func.count(Company.id)
+            .filter(status.in_(tuple(DEEP_RESEARCH_STATUSES)))
+            .label("suitable"),
+            func.count(Company.id)
             .filter(Company.created_at >= today_start)
             .label("today"),
             func.count(Company.id)
@@ -102,6 +105,7 @@ def _company_counters(db: Session, now: datetime) -> DashboardStats:
         researched_companies=row.researched or 0,
         pending_companies=row.pending or 0,
         analyzed_companies=row.analyzed or 0,
+        suitable_companies=row.suitable or 0,
         companies_added_today=row.today or 0,
         companies_added_last_7_days=row.week or 0,
         total_contacts=contacts_total,

@@ -39,11 +39,11 @@ export function buildMetricCards(data: DashboardStatsResponse): MetricCard[] {
     {
       key: "researched",
       label: "Araştırılan şirket",
-      value: stats.total_companies,
+      value: stats.analyzed_companies,
       icon: Building2,
       tone: "brand",
       delta: stats.companies_added_last_7_days,
-      caption: "Son 7 günde eklenen",
+      caption: "AI analizi tamamlanan",
       provisional: false,
     },
     {
@@ -86,13 +86,25 @@ export interface FunnelStage {
   value: number;
 }
 
+const SUITABLE_STATUSES = new Set(["qualified", "high priority"]);
+
+function suitableCompanyCount(data: DashboardStatsResponse): number {
+  if (typeof data.stats.suitable_companies === "number") {
+    return data.stats.suitable_companies;
+  }
+  return data.status_breakdown.reduce(
+    (sum, row) => sum + (SUITABLE_STATUSES.has(row.status) ? row.count : 0),
+    0,
+  );
+}
+
 /** "Satış akışı" hunisi — her adım gerçek bir backend sayacına bağlı. */
 export function buildFunnelStages(data: DashboardStatsResponse): FunnelStage[] {
   const { stats } = data;
 
   return [
-    { key: "discovery", label: "Keşif", value: stats.total_companies },
-    { key: "qualified", label: "Uygun", value: stats.researched_companies },
+    { key: "discovery", label: "Keşif", value: stats.analyzed_companies },
+    { key: "qualified", label: "Uygun", value: suitableCompanyCount(data) },
     { key: "contact", label: "İletişim", value: stats.total_contacts },
     { key: "demo", label: "Demo", value: stats.analyzed_companies },
     { key: "proposal", label: "Teklif", value: stats.high_intent_companies },

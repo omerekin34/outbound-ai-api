@@ -16,6 +16,8 @@ export interface DashboardStats {
   researched_companies: number;
   pending_companies: number;
   analyzed_companies: number;
+  /** Step 19: yalnızca qualified / high priority. */
+  suitable_companies: number;
   companies_added_today: number;
   companies_added_last_7_days: number;
   total_contacts: number;
