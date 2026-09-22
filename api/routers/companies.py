@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import re
 import uuid
 
@@ -12,7 +11,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from api import models
-from api.config import get_settings
 from api.database import get_db
 from api.schemas import (
     CompanyAnalysisOut,
@@ -31,15 +29,8 @@ from api.services.activity import (
     track_activity,
 )
 from api.services.analysis import persist_analysis
-from api.services.enrichment import (
-    analyze_company_content,
-    analyze_scraped_pages,
-    firecrawl_client,
-)
-from api.services.website_research import research_website
-
-logger = logging.getLogger(__name__)
-settings = get_settings()
+from api.services.enrichment import analyze_company_content
+from api.services.research_job import ResearchJobError, execute_research_pipeline
 
 # Prefix `index.py` içinde verilir: `/api/companies` (ve geriye dönük
 # uyumluluk için prefix'siz `/companies`).
@@ -221,32 +212,18 @@ def research_website_endpoint(
         company_name=company.name,
         detail={"website": payload.website, "max_pages": payload.max_pages},
     ) as activity:
-        # Spec: adres girdiden gelir. Kayıtlı adres farklıysa güncelliyoruz ki
-        # sonraki adımlar aynı kaynağı kullansın.
-        if company.website != payload.website:
-            company.website = payload.website
-
-        result = research_website(
-            firecrawl_client(),
-            payload.website,
-            max_pages=payload.max_pages,
-            map_limit=settings.research_map_limit,
-            timeout_seconds=settings.research_scrape_timeout_seconds,
-        )
-
-        if not result.scraped_pages:
+        try:
+            result, extraction, facts_saved, scores = execute_research_pipeline(
+                db,
+                company,
+                payload.website,
+                max_pages=payload.max_pages,
+            )
+        except ResearchJobError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=(
-                    f"Hedef sayfaların hiçbiri taranamadı "
-                    f"({len(result.selected_pages)} sayfa denendi)."
-                ),
-            )
-
-        extraction = analyze_scraped_pages(company.name or "", result.scraped_pages)
-        facts_saved, scores = persist_analysis(
-            db, company, extraction, source_type="website"
-        )
+                detail=exc.message,
+            ) from exc
         db.commit()
 
         analysis = {"facts": extraction["facts"], "scores": scores.as_dict()}

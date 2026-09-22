@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from api import database as database_module
 from api.database import Base, get_db
 from api.index import app
 from api.services import activity as activity_service
@@ -40,6 +41,7 @@ def db_sessionmaker(tmp_path, monkeypatch) -> Iterator[Any]:
     Base.metadata.create_all(engine)
     maker = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     monkeypatch.setattr(activity_service, "SessionLocal", maker)
+    monkeypatch.setattr(database_module, "SessionLocal", maker)
     yield maker
     engine.dispose()
 
@@ -55,8 +57,9 @@ def client(db_sessionmaker, monkeypatch) -> Iterator[TestClient]:
         finally:
             session.close()
 
-    # Aktivite kaydı kendi bağımsız session'ını açıyor; onu da yönlendiriyoruz.
+    # Aktivite ve arka plan keşif görevi kendi session'ını açar; SQLite'a çek.
     monkeypatch.setattr(activity_service, "SessionLocal", db_sessionmaker)
+    monkeypatch.setattr(database_module, "SessionLocal", db_sessionmaker)
     app.dependency_overrides[get_db] = override_get_db
 
     # Bilinçli olarak context manager kullanmıyoruz: `lifespan` gerçek Neon

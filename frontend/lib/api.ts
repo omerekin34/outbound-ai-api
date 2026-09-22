@@ -265,6 +265,52 @@ export function fetchOpportunities(
   return request<OpportunitiesResponse>(path, signal);
 }
 
+export interface ResearchAccepted {
+  status: "accepted";
+  message: string;
+  domain: string;
+  website: string;
+  company_id: string;
+}
+
+export async function startResearch(domain: string): Promise<ResearchAccepted> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/research`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ domain }),
+    });
+  } catch {
+    throw new ApiError(
+      `API'ye ulaşılamadı (${API_BASE_URL}). FastAPI sunucusunun çalıştığından emin olun.`,
+    );
+  }
+
+  if (!response.ok) {
+    let detail = `İstek başarısız (HTTP ${response.status}).`;
+    try {
+      const body = (await response.json()) as { detail?: unknown };
+      if (typeof body.detail === "string") {
+        detail = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        const first = body.detail[0] as { msg?: string } | undefined;
+        if (first?.msg) {
+          detail = first.msg.replace(/^Value error,\s*/i, "");
+        }
+      }
+    } catch {
+      // Gövde JSON değilse varsayılan mesajla devam et.
+    }
+    throw new ApiError(detail, response.status);
+  }
+
+  return (await response.json()) as ResearchAccepted;
+}
+
 export async function markReplyRead(
   id: number,
   isRead: boolean,

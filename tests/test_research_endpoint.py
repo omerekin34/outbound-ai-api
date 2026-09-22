@@ -14,8 +14,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from api import models
-from api.routers import companies as companies_router
 from api.services import enrichment
+from api.services import research_job as research_job_service
 from api.services.scoring import SCORE_VERSION, calculate_scores
 
 BASE = "https://ornekmakina.com.tr"
@@ -145,9 +145,8 @@ def seed_company(db_sessionmaker) -> None:
 @pytest.fixture
 def fake_firecrawl(monkeypatch) -> FakeFirecrawl:
     fake = FakeFirecrawl()
-    # Router `firecrawl_client`'ı isimle import ettiği için yama router
-    # modülünde yapılmalı; yalnızca `enrichment`'ı yamamak etkisiz kalır.
-    monkeypatch.setattr(companies_router, "firecrawl_client", lambda: fake)
+    # Hattı `research_job` yürütür; istemci orada çözülür.
+    monkeypatch.setattr(research_job_service, "firecrawl_client", lambda: fake)
     monkeypatch.setattr(enrichment, "firecrawl_client", lambda: fake)
     return fake
 

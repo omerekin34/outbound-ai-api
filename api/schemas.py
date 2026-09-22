@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.services.research_job import clean_domain
 from api.services.website_research import MAX_PAGES
 
 AiState = Literal["working", "idle", "stalled", "error"]
@@ -63,14 +64,7 @@ class CompanyCreate(BaseModel):
     @classmethod
     def _clean_domain(cls, value: str) -> str:
         """`https://www.x.com/abc` gibi girdileri `x.com` haline getirir."""
-        cleaned = value.strip().lower()
-        for prefix in ("https://", "http://"):
-            if cleaned.startswith(prefix):
-                cleaned = cleaned[len(prefix) :]
-        cleaned = cleaned.removeprefix("www.").split("/", 1)[0].strip()
-        if not cleaned:
-            raise ValueError("Geçerli bir domain girin.")
-        return cleaned
+        return clean_domain(value)
 
 
 class CompanyResearchRequest(BaseModel):
@@ -104,6 +98,32 @@ class CompanyAnalyzeRequest(BaseModel):
     company_id: str = Field(min_length=1, max_length=255)
     website_content: str = Field(min_length=1)
     source_url: str | None = None
+
+
+class DomainResearchRequest(BaseModel):
+    """Keşif / n8n girdisi. Yalnızca alan adı yeter; URL de kabul edilir."""
+
+    domain: str = Field(
+        min_length=3,
+        max_length=255,
+        examples=["ornekmakina.com.tr", "https://www.ornekmakina.com.tr"],
+        description="Şirket alan adı. http(s) ve yol kabul edilir, çıplak domain'e indirgenir.",
+    )
+
+    @field_validator("domain")
+    @classmethod
+    def _clean_domain(cls, value: str) -> str:
+        return clean_domain(value)
+
+
+class ResearchAcceptedOut(BaseModel):
+    """202 — hat arka planda başladı; n8n beklememelidir."""
+
+    status: Literal["accepted"]
+    message: str
+    domain: str
+    website: str
+    company_id: str
 
 
 # --- Yanıtlar ---------------------------------------------------------------
