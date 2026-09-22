@@ -22,7 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from api import models  # noqa: F401  (metadata'nın yüklenmesi için gerekli)
 from api.config import get_settings
 from api.database import Base, engine
-from api.routers import companies, dashboard, health
+from api.routers import companies, dashboard, health, inbox
 
 settings = get_settings()
 
@@ -75,6 +75,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(dashboard.router, prefix="/api")
+app.include_router(inbox.router, prefix="/api")
 app.include_router(companies.router, prefix="/api")
 # Eski frontend çağrılarını kırmamak için prefix'siz yollar da açık tutulur
 # (`/companies/discover`). Dokümantasyonda gösterilmez; yeni kodda `/api` kullanın.

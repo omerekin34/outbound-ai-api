@@ -14,7 +14,14 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from api.config import get_settings
-from api.models import ActivityLog, Company, Contact, Score, normalized_status
+from api.models import (
+    ActivityLog,
+    Company,
+    Contact,
+    Score,
+    normalized_status,
+    trim_chars,
+)
 from api.schemas import (
     ActivityOut,
     AiStatus,
@@ -23,6 +30,8 @@ from api.schemas import (
     IndustryCount,
     StatusCount,
 )
+from api.services.inbox import count_positive_replies
+from api.services.scoring import QUALIFICATION_STATUSES
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -30,7 +39,7 @@ settings = get_settings()
 # Keşfedilmiş ama henüz araştırılmamış kayıtlar.
 PENDING_STATUSES = ("", "new", "pending", "queued", "discovered")
 # Analiz/puanlama adımını tamamlamış kayıtlar.
-ANALYZED_STATUSES = ("analyzed", "scored")
+ANALYZED_STATUSES = ("analyzed", "scored", *QUALIFICATION_STATUSES)
 # Bu puanın üzerindeki şirketler "yüksek niyetli" sayılır.
 HIGH_INTENT_SCORE = 70.0
 
@@ -85,6 +94,7 @@ def _company_counters(db: Session, now: datetime) -> DashboardStats:
         )
     ).one()
     average_score, high_intent = score_row
+    positive_replies, unread_replies = count_positive_replies(db)
 
     return DashboardStats(
         total_companies=row.total or 0,
@@ -96,6 +106,8 @@ def _company_counters(db: Session, now: datetime) -> DashboardStats:
         total_contacts=contacts_total,
         average_overall_score=round(float(average_score), 2) if average_score else None,
         high_intent_companies=high_intent or 0,
+        positive_replies=positive_replies,
+        unread_replies=unread_replies,
     )
 
 
@@ -112,7 +124,7 @@ def _status_breakdown(db: Session) -> list[StatusCount]:
 
 
 def _top_industries(db: Session, limit: int = 5) -> list[IndustryCount]:
-    industry = func.nullif(func.btrim(func.coalesce(Company.industry, "")), "")
+    industry = func.nullif(trim_chars(func.coalesce(Company.industry, "")), "")
     rows = db.execute(
         select(industry.label("industry"), func.count(Company.id).label("count"))
         .where(industry.isnot(None))

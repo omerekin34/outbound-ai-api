@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from api.services.website_research import MAX_PAGES
 
 AiState = Literal["working", "idle", "stalled", "error"]
 ActivityStatus = Literal["running", "success", "failed", "skipped"]
@@ -71,12 +74,36 @@ class CompanyCreate(BaseModel):
 
 
 class CompanyResearchRequest(BaseModel):
+    """Workflow 3 girdisi. Spec: `company_id` ve `website` zorunludur."""
+
     company_id: str = Field(min_length=1, max_length=255)
+    website: str = Field(min_length=4, max_length=2048)
+    # Spec: 20 kesin üst sınırdır; daha küçük bir değer verilebilir ama
+    # `le=MAX_PAGES` sayesinde aşılamaz.
+    max_pages: int = Field(default=MAX_PAGES, ge=1, le=MAX_PAGES)
+
+    @field_validator("website")
+    @classmethod
+    def _normalize_website(cls, value: str) -> str:
+        """Şemasız girdileri `https://` ile tamamlar ve adresi doğrular."""
+        candidate = value.strip()
+        if not candidate:
+            raise ValueError("Web sitesi adresi boş olamaz.")
+        if "://" not in candidate:
+            candidate = f"https://{candidate}"
+
+        parsed = urlparse(candidate)
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("Web sitesi adresi http veya https olmalıdır.")
+        if not parsed.netloc or "." not in parsed.netloc:
+            raise ValueError("Geçerli bir web sitesi alan adı girin.")
+        return candidate
 
 
 class CompanyAnalyzeRequest(BaseModel):
     company_id: str = Field(min_length=1, max_length=255)
     website_content: str = Field(min_length=1)
+    source_url: str | None = None
 
 
 # --- Yanıtlar ---------------------------------------------------------------
@@ -114,6 +141,124 @@ class CompanyListOut(BaseModel):
     offset: int
 
 
+class ScoresOut(BaseModel):
+    icp_score: float
+    need_score: float
+    timing_score: float = 0.0
+    reachability_score: float = 0.0
+    #: Step 19: (ICP + Need) / 2.
+    overall_score: float
+    qualification_status: str
+    requires_deep_research: bool
+
+
+class FactOut(BaseModel):
+    fact_type: str
+    value: str
+    confidence: float
+    evidence_text: str
+    #: Kanıtın alındığı sayfa; analyzer'ın uydurduğu adresler filtrelenir.
+    source_url: str | None
+
+
+class CompanyAnalysisOut(BaseModel):
+    scores: ScoresOut
+    facts: list[FactOut]
+
+
+class ResearchedPageOut(BaseModel):
+    url: str
+    category: str
+    characters: int
+
+
+class WebsiteResearchResponse(BaseModel):
+    """Workflow 3 çıktısı."""
+
+    status: Literal["success"]
+    company_id: str
+    company: str | None
+    website: str
+    max_pages: int
+    discovered_urls: int
+    selected_pages: int
+    scraped_pages: int
+    total_characters: int
+    credits_used: int | None
+    used_fallback: bool
+    pages: list[ResearchedPageOut]
+    analysis: CompanyAnalysisOut
+    facts_saved: int
+    message: str
+
+
+class ReplyOut(UtcModel):
+    """Gelen kutusu / fırsatlar listesindeki tek bir yanıt satırı."""
+
+    id: int
+
+    # Şirket
+    company_id: str | None
+    company_name: str | None
+    company_domain: str | None
+    company_industry: str | None
+    company_city: str | None
+
+    # Karar verici
+    contact_id: str | None
+    contact_name: str | None
+    contact_title: str | None
+    contact_email: str | None
+
+    # Yanıtın kendisi
+    subject: str | None
+    #: Yanıtın birebir metni.
+    body: str
+    #: Tabloda gösterilen tek satırlık önizleme.
+    snippet: str
+
+    # AI sınıflandırması
+    classification: str | None
+    confidence: float | None
+    ai_summary: str | None
+    ai_next_action: str | None
+
+    channel: str
+    is_read: bool
+    received_at: datetime
+    #: Şirketin genel puanı (varsa); fırsat sıralamasında kullanılır.
+    overall_score: float | None
+
+
+class ClassificationCount(BaseModel):
+    classification: str
+    count: int
+
+
+class InboxResponse(BaseModel):
+    items: list[ReplyOut]
+    #: Seçili filtrelere uyan yanıt sayısı (sayfalama için).
+    total: int
+    limit: int
+    offset: int
+    #: Sınıflandırma/okunma filtresi uygulanmadan toplam gelen yanıt sayısı.
+    #: Üst sayaçlar ve "Tümü" çipi bunu kullanır.
+    inbound_total: int
+    unread_count: int
+    positive_count: int
+    classification_breakdown: list[ClassificationCount]
+
+
+class OpportunitiesResponse(BaseModel):
+    items: list[ReplyOut]
+    total: int
+    limit: int
+    offset: int
+    unique_companies: int
+    #: Fırsat listesindeki şirketlerin ortalama genel puanı.
+    average_score: float | None
+
+
 class ActivityOut(UtcModel):
     id: int
     event_type: str
@@ -139,6 +284,10 @@ class DashboardStats(BaseModel):
     total_contacts: int
     average_overall_score: float | None
     high_intent_companies: int
+    #: AI'ın olumlu sınıflandırdığı gelen yanıt sayısı ("Olumlu yanıt" kartı).
+    positive_replies: int
+    #: Henüz okunmamış gelen yanıt sayısı (gelen kutusu rozeti).
+    unread_replies: int
 
 
 class AiStatus(BaseModel):

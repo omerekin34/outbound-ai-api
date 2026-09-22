@@ -12,13 +12,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from api import models
+from api.config import get_settings
 from api.database import get_db
 from api.schemas import (
+    CompanyAnalysisOut,
     CompanyAnalyzeRequest,
     CompanyCreate,
     CompanyListOut,
     CompanyOut,
     CompanyResearchRequest,
+    ResearchedPageOut,
+    WebsiteResearchResponse,
 )
 from api.services.activity import (
     EVENT_AI_ANALYSIS,
@@ -26,9 +30,16 @@ from api.services.activity import (
     EVENT_WEBSITE_RESEARCH,
     track_activity,
 )
-from api.services.enrichment import analyze_company_content, scrape_website
+from api.services.analysis import persist_analysis
+from api.services.enrichment import (
+    analyze_company_content,
+    analyze_scraped_pages,
+    firecrawl_client,
+)
+from api.services.website_research import research_website
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 # Prefix `index.py` içinde verilir: `/api/companies` (ve geriye dönük
 # uyumluluk için prefix'siz `/companies`).
@@ -185,50 +196,109 @@ def discover_company(payload: CompanyCreate, db: Session = Depends(get_db)) -> d
         }
 
 
-@router.post("/research-website", summary="Web sitesi taraması (Firecrawl)")
-def research_website(
+@router.post(
+    "/research-website",
+    response_model=WebsiteResearchResponse,
+    summary="Workflow 3 — hedefli web sitesi araştırması ve AI analizi",
+)
+def research_website_endpoint(
     payload: CompanyResearchRequest, db: Session = Depends(get_db)
-) -> dict:
-    company = _get_company_or_404(db, payload.company_id)
+) -> WebsiteResearchResponse:
+    """Workflow 3'ü uçtan uca yürütür.
 
-    if not company.website:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bu şirketin kayıtlı bir web sitesi yok.",
-        )
+    1. `company_id` + `website` girdisi doğrulanır.
+    2. Firecrawl `map` ile URL'ler keşfedilir, yalnızca hedef kategorilerdeki
+       sayfalar seçilir (kör tarama yok).
+    3. En fazla `max_pages` (üst sınır 20) sayfa taranır.
+    4. Toplanan içerik AI Company Analyzer'a verilir; fact ve kanıtlar kaydedilir.
+    """
+    company = _get_company_or_404(db, payload.company_id)
 
     with track_activity(
         EVENT_WEBSITE_RESEARCH,
-        f"{company.name} web sitesi taranıyor",
+        f"{company.name} web sitesi araştırılıyor",
         company_id=company.id,
         company_name=company.name,
-        detail={"website": company.website},
+        detail={"website": payload.website, "max_pages": payload.max_pages},
     ) as activity:
-        markdown = scrape_website(company.website)
+        # Spec: adres girdiden gelir. Kayıtlı adres farklıysa güncelliyoruz ki
+        # sonraki adımlar aynı kaynağı kullansın.
+        if company.website != payload.website:
+            company.website = payload.website
 
-        company.status = "website_scraped"
-        db.commit()
-
-        activity.succeed(
-            f"{company.name} web sitesi tarandı ({len(markdown):,} karakter).",
-            {"characters": len(markdown)},
+        result = research_website(
+            firecrawl_client(),
+            payload.website,
+            max_pages=payload.max_pages,
+            map_limit=settings.research_map_limit,
+            timeout_seconds=settings.research_scrape_timeout_seconds,
         )
 
-        return {
-            "status": "success",
-            "company_id": company.id,
-            "company": company.name,
-            "scraped_length": len(markdown),
-            "preview": markdown[:300],
-            "content": markdown,
-            "message": "Web sitesi tarandı ve markdown formatına çevrildi.",
-        }
+        if not result.scraped_pages:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    f"Hedef sayfaların hiçbiri taranamadı "
+                    f"({len(result.selected_pages)} sayfa denendi)."
+                ),
+            )
+
+        extraction = analyze_scraped_pages(company.name or "", result.scraped_pages)
+        facts_saved, scores = persist_analysis(
+            db, company, extraction, source_type="website"
+        )
+        db.commit()
+
+        analysis = {"facts": extraction["facts"], "scores": scores.as_dict()}
+        activity.succeed(
+            f"{company.name}: {len(result.scraped_pages)} sayfa tarandı, "
+            f"{facts_saved} bulgu çıkarıldı "
+            f"({scores.qualification_status}, genel puan: {scores.overall_score}).",
+            {
+                "scraped_pages": len(result.scraped_pages),
+                "discovered_urls": result.discovered_urls,
+                "facts": facts_saved,
+                "overall_score": scores.overall_score,
+                "qualification_status": scores.qualification_status,
+                "requires_deep_research": scores.requires_deep_research,
+                "credits_used": result.credits_used,
+                "score_version": scores.version,
+            },
+        )
+
+        return WebsiteResearchResponse(
+            status="success",
+            company_id=company.id,
+            company=company.name,
+            website=result.website,
+            max_pages=result.max_pages,
+            discovered_urls=result.discovered_urls,
+            selected_pages=len(result.selected_pages),
+            scraped_pages=len(result.scraped_pages),
+            total_characters=result.total_characters,
+            credits_used=result.credits_used,
+            used_fallback=result.used_fallback,
+            pages=[
+                ResearchedPageOut(
+                    url=page.url,
+                    category=page.category,
+                    characters=page.characters,
+                )
+                for page in result.scraped_pages
+            ],
+            analysis=CompanyAnalysisOut.model_validate(analysis),
+            facts_saved=facts_saved,
+            message=(
+                f"{len(result.scraped_pages)} hedef sayfa tarandı ve analiz edildi."
+            ),
+        )
 
 
-@router.post("/analyze", summary="AI ile analiz ve puanlama")
+@router.post("/analyze", summary="Hazır metinden AI analizi ve puanlama")
 def analyze_company(
     payload: CompanyAnalyzeRequest, db: Session = Depends(get_db)
 ) -> dict:
+    """Elde hazır içerik varken analiz eder; taramayı Workflow 3 yapar."""
     company = _get_company_or_404(db, payload.company_id)
 
     with track_activity(
@@ -237,21 +307,27 @@ def analyze_company(
         company_id=company.id,
         company_name=company.name,
     ) as activity:
-        analysis = analyze_company_content(company.name or "", payload.website_content)
-
-        scores = analysis.get("scores") or {}
-        _upsert_score(db, company.id, scores)
-
-        facts = analysis.get("facts") or []
-        fact_count = _upsert_facts(db, company, facts)
-
-        company.status = "analyzed"
+        extraction = analyze_company_content(
+            company.name or "",
+            payload.website_content,
+            payload.source_url or company.website,
+        )
+        fact_count, scores = persist_analysis(
+            db, company, extraction, source_type="website"
+        )
         db.commit()
 
-        overall = scores.get("overall_score")
+        analysis = {"facts": extraction["facts"], "scores": scores.as_dict()}
         activity.succeed(
-            f"{company.name} analiz edildi (genel puan: {overall}).",
-            {"overall_score": overall, "fact_count": fact_count},
+            f"{company.name} analiz edildi "
+            f"({scores.qualification_status}, genel puan: {scores.overall_score}).",
+            {
+                "overall_score": scores.overall_score,
+                "qualification_status": scores.qualification_status,
+                "requires_deep_research": scores.requires_deep_research,
+                "fact_count": fact_count,
+                "score_version": scores.version,
+            },
         )
 
         return {
@@ -260,72 +336,3 @@ def analyze_company(
             "message": "Şirket analiz edildi ve sonuçlar kaydedildi.",
             "data": analysis,
         }
-
-
-def _as_float(value: object, default: float = 0.0) -> float:
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
-
-
-def _upsert_score(db: Session, company_id: str, scores: dict) -> None:
-    """`scores.company_id` tekil olduğu için var olan kayıt güncellenir."""
-    record = db.execute(
-        select(models.Score).where(models.Score.company_id == company_id)
-    ).scalar_one_or_none()
-
-    values = {
-        "icp_score": _as_float(scores.get("icp_score")),
-        "need_score": _as_float(scores.get("need_score")),
-        "timing_score": _as_float(scores.get("timing_score")),
-        "reachability_score": _as_float(scores.get("reachability_score")),
-        "overall_score": _as_float(scores.get("overall_score")),
-        "calculated_at": models.utcnow().replace(tzinfo=None),
-    }
-
-    if record is None:
-        db.add(models.Score(company_id=company_id, **values))
-        return
-    for key, value in values.items():
-        setattr(record, key, value)
-
-
-def _upsert_facts(db: Session, company: models.Company, facts: list) -> int:
-    """`(company_id, fact_type)` tekil olduğu için tip başına tek kayıt tutulur."""
-    existing = {
-        fact.fact_type: fact
-        for fact in db.execute(
-            select(models.CompanyFact).where(
-                models.CompanyFact.company_id == company.id
-            )
-        ).scalars()
-    }
-
-    written = 0
-    for raw in facts:
-        if not isinstance(raw, dict):
-            continue
-        fact_type = str(raw.get("fact_type") or "unknown")
-        values = {
-            "value": str(raw.get("value") or ""),
-            "confidence": _as_float(raw.get("confidence")),
-            "evidence_text": str(raw.get("evidence_text") or ""),
-            "source_type": "website",
-            "source_url": company.website,
-            "observed_at": models.utcnow().replace(tzinfo=None),
-        }
-
-        record = existing.get(fact_type)
-        if record is None:
-            db.add(
-                models.CompanyFact(
-                    company_id=company.id, fact_type=fact_type, **values
-                )
-            )
-        else:
-            for key, value in values.items():
-                setattr(record, key, value)
-        written += 1
-
-    return written

@@ -1,7 +1,7 @@
 """Neon şemasını `api/models.py` ile hizalayan tek seferlik migration.
 
 Yaptıkları:
-  1. Eksik tabloları oluşturur (`activity_logs`).
+  1. Eksik tabloları oluşturur (`activity_logs`, `interactions`).
   2. `companies.normalized_name` kolonunu ekler (tekilleştirme için gerekli).
   3. `scores`, `company_facts`, `outreach_messages` tablolarındaki `company_id`
      kolonunu INTEGER -> VARCHAR(255) yapar. `companies.id` VARCHAR olduğu için
@@ -28,7 +28,10 @@ from sqlalchemy import inspect, text
 
 from api.config import get_settings
 from api.database import Base, engine
-from api.models import ActivityLog  # noqa: F401  (metadata'ya kaydolması için)
+from api.models import (  # noqa: F401  (metadata'ya kaydolması için)
+    ActivityLog,
+    Interaction,
+)
 
 ID_TYPE = "VARCHAR(255)"
 
@@ -51,6 +54,11 @@ INDEXES = (
     ("ix_companies_domain", "companies", "(domain)"),
     ("ix_companies_normalized_name", "companies", "(normalized_name)"),
     ("ix_contacts_company_id", "contacts", "(company_id)"),
+    # Gelen kutusu / fırsatlar sorguları.
+    ("ix_interactions_company_id", "interactions", "(company_id)"),
+    ("ix_interactions_received_at", "interactions", "(received_at DESC)"),
+    ("ix_scores_qualification_status", "scores", "(qualification_status)"),
+    ("ix_scores_requires_deep_research", "scores", "(requires_deep_research)"),
 )
 
 
@@ -205,6 +213,28 @@ def add_foreign_keys(connection, migrator: Migrator) -> None:
         )
 
 
+def add_score_qualification_columns(connection, migrator: Migrator) -> None:
+    """Step 19–20: yeterlilik durumu ve derin araştırma bayrağı."""
+    if column_type(connection, "scores", "qualification_status") is None:
+        migrator.execute(
+            connection,
+            "ALTER TABLE scores ADD COLUMN qualification_status VARCHAR(32)",
+            "scores.qualification_status kolonu eklendi.",
+        )
+    else:
+        migrator.log_skipped("scores.qualification_status zaten var.")
+
+    if column_type(connection, "scores", "requires_deep_research") is None:
+        migrator.execute(
+            connection,
+            "ALTER TABLE scores ADD COLUMN requires_deep_research BOOLEAN "
+            "NOT NULL DEFAULT FALSE",
+            "scores.requires_deep_research kolonu eklendi.",
+        )
+    else:
+        migrator.log_skipped("scores.requires_deep_research zaten var.")
+
+
 def create_indexes(connection, migrator: Migrator) -> None:
     for name, table, definition in INDEXES:
         if not column_type(connection, table, definition.strip("()").split()[0]):
@@ -267,6 +297,7 @@ def main() -> int:
         add_normalized_name(connection, migrator)
         align_company_id_columns(connection, migrator)
         add_foreign_keys(connection, migrator)
+        add_score_qualification_columns(connection, migrator)
         create_indexes(connection, migrator)
         if args.fix_status:
             fix_status_values(connection, migrator)

@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# Testler: `python -m pytest tests/`
+pytest
+# fastapi.testclient için gerekli.
+httpx

@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+/* Revenue dashboard tasarım paleti: sıcak krem zemin + koyu yeşil vurgu. */
+@theme {
+  --color-canvas: #faf9f6;
+  --color-sidebar: #f3f2ec;
+  --color-surface: #ffffff;
+
+  --color-ink: #16241f;
+  --color-ink-soft: #5d6b65;
+  --color-ink-muted: #8d9792;
+
+  --color-line: #e7e4dc;
+  --color-line-soft: #efece5;
+
+  --color-brand: #1c7a62;
+  --color-brand-soft: #d7ebe2;
+  --color-brand-deep: #123d31;
+  --color-brand-light: #8cc9b4;
+
+  --color-accent: #9c6f12;
+  --color-accent-soft: #fbf2df;
+  --color-accent-line: #f0e2c4;
+
+  --color-danger: #c0442a;
+  --color-danger-soft: #fbeae4;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+
+  --radius-card: 16px;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Sayısal alanların hizalı durması için (metrik kartları, tablolar). */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}

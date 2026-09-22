@@ -118,6 +118,14 @@ class Settings:
     openai_api_key: str
     openai_model: str
 
+    # Workflow 3 — web sitesi araştırması
+    # Not: taranacak azami sayfa sayısı (20) spec gereği sabittir ve ortam
+    # değişkeniyle yükseltilemez; bkz. services/website_research.MAX_PAGES.
+    research_map_limit: int
+    research_chars_per_page: int
+    research_total_chars: int
+    research_scrape_timeout_seconds: int
+
     @property
     def masked_database_url(self) -> str:
         """Şifresi gizlenmiş bağlantı adresi — yalnızca sunucu log'ları için."""
@@ -165,4 +173,8 @@ def get_settings() -> Settings:
         firecrawl_api_key=_env("FIRECRAWL_API_KEY"),
         openai_api_key=_env("OPENAI_API_KEY"),
         openai_model=_env("OPENAI_MODEL", "gpt-4o-mini"),
+        research_map_limit=_env_int("RESEARCH_MAP_LIMIT", 300),
+        research_chars_per_page=_env_int("RESEARCH_CHARS_PER_PAGE", 2_500),
+        research_total_chars=_env_int("RESEARCH_TOTAL_CHARS", 30_000),
+        research_scrape_timeout_seconds=_env_int("RESEARCH_SCRAPE_TIMEOUT", 180),
     )
