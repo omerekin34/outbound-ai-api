@@ -219,6 +219,40 @@ export function fetchInbox(
   return request<InboxResponse>(path, signal);
 }
 
+export interface DecisionMaker {
+  id: string;
+  company_id: string | null;
+  company_name: string | null;
+  company_domain: string | null;
+  company_status: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  name: string | null;
+  title: string | null;
+  email: string | null;
+  linkedin_url: string | null;
+}
+
+export interface ContactListResponse {
+  items: DecisionMaker[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export function fetchDecisionMakers(
+  query: Pick<InboxQuery, "limit" | "offset" | "search"> = {},
+  signal?: AbortSignal,
+): Promise<ContactListResponse> {
+  const path = `/api/contacts${buildQuery({
+    limit: query.limit,
+    offset: query.offset,
+    search: query.search,
+    qualified_only: true,
+  })}`;
+  return request<ContactListResponse>(path, signal);
+}
+
 export function fetchOpportunities(
   query: Pick<InboxQuery, "limit" | "offset" | "search"> = {},
   signal?: AbortSignal,

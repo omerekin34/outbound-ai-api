@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 EVENT_COMPANY_DISCOVERY = "company_discovery"
 EVENT_WEBSITE_RESEARCH = "website_research"
 EVENT_AI_ANALYSIS = "ai_analysis"
+EVENT_DECISION_MAKER = "decision_maker_search"
 
 # Panelde tek satırda gösterilebilmesi için mesaj uzunluğu sınırlanır;
 # dış servisler bazen sayfalarca hata metni döndürüyor.

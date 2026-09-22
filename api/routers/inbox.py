@@ -11,8 +11,13 @@ from sqlalchemy.orm import Session
 
 from api.database import get_db
 from api.models import Interaction
-from api.schemas import InboxResponse, OpportunitiesResponse, ReplyOut
-from api.services.inbox import fetch_inbox, fetch_opportunities, fetch_reply
+from api.schemas import ContactListOut, InboxResponse, OpportunitiesResponse, ReplyOut
+from api.services.inbox import (
+    fetch_contacts,
+    fetch_inbox,
+    fetch_opportunities,
+    fetch_reply,
+)
 
 router = APIRouter(tags=["inbox"])
 
@@ -26,6 +31,30 @@ ALLOWED_CLASSIFICATIONS = (
     Interaction.CLASS_UNSUBSCRIBE,
     Interaction.CLASS_AUTO_REPLY,
 )
+
+
+@router.get(
+    "/contacts",
+    response_model=ContactListOut,
+    summary="Karar vericiler — Neon contacts tablosu (Apollo)",
+)
+def list_contacts(
+    db: Session = Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None, min_length=1, max_length=200),
+    qualified_only: bool = Query(
+        default=True,
+        description="Yalnızca qualified / high priority şirketlerin kişileri.",
+    ),
+) -> ContactListOut:
+    return fetch_contacts(
+        db,
+        limit=limit,
+        offset=offset,
+        search=search,
+        qualified_only=qualified_only,
+    )
 
 
 @router.get(

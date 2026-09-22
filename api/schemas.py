@@ -249,6 +249,29 @@ class InboxResponse(BaseModel):
     classification_breakdown: list[ClassificationCount]
 
 
+class ContactOut(BaseModel):
+    """Apollo'dan kaydedilmiş bir karar verici."""
+
+    id: str
+    company_id: str | None
+    company_name: str | None
+    company_domain: str | None
+    company_status: str | None
+    first_name: str | None
+    last_name: str | None
+    name: str | None
+    title: str | None
+    email: str | None
+    linkedin_url: str | None
+
+
+class ContactListOut(BaseModel):
+    items: list[ContactOut]
+    total: int
+    limit: int
+    offset: int
+
+
 class OpportunitiesResponse(BaseModel):
     items: list[ReplyOut]
     total: int

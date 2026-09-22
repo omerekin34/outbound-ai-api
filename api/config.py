@@ -117,6 +117,8 @@ class Settings:
     firecrawl_api_key: str
     openai_api_key: str
     openai_model: str
+    apollo_api_key: str
+    apollo_max_contacts: int
 
     # Workflow 3 — web sitesi araştırması
     # Not: taranacak azami sayfa sayısı (20) spec gereği sabittir ve ortam
@@ -173,6 +175,8 @@ def get_settings() -> Settings:
         firecrawl_api_key=_env("FIRECRAWL_API_KEY"),
         openai_api_key=_env("OPENAI_API_KEY"),
         openai_model=_env("OPENAI_MODEL", "gpt-4o-mini"),
+        apollo_api_key=_env("APOLLO_API_KEY"),
+        apollo_max_contacts=_env_int("APOLLO_MAX_CONTACTS", 8),
         research_map_limit=_env_int("RESEARCH_MAP_LIMIT", 300),
         research_chars_per_page=_env_int("RESEARCH_CHARS_PER_PAGE", 2_500),
         research_total_chars=_env_int("RESEARCH_TOTAL_CHARS", 30_000),

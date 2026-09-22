@@ -14,6 +14,7 @@ import {
   StaleWarning,
 } from "@/components/replies/ReplyStates";
 import { ReplyTable } from "@/components/replies/ReplyTable";
+import { DecisionMakersTable } from "@/components/replies/DecisionMakersTable";
 import { markReplyRead, type Reply } from "@/lib/api";
 import {
   FILTER_ORDER,
@@ -21,7 +22,7 @@ import {
   describeClassification,
 } from "@/lib/classification";
 import { formatNumber } from "@/lib/format";
-import { useInbox } from "@/lib/useReplies";
+import { useDecisionMakers, useInbox } from "@/lib/useReplies";
 
 const PAGE_SIZE = 25;
 
@@ -30,6 +31,11 @@ export function InboxView() {
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [search, setSearch] = useState("");
 
+  const contacts = useDecisionMakers({
+    limit: PAGE_SIZE,
+    offset: 0,
+    search: search.trim() || null,
+  });
   const { data, error, isLoading, isRefreshing, refresh } = useInbox({
     limit: PAGE_SIZE,
     offset: 0,
@@ -60,8 +66,11 @@ export function InboxView() {
       <PageHeader
         title="Gelen Kutusu"
         subtitle="AI'ın sınıflandırdığı gelen e-posta yanıtları."
-        isRefreshing={isRefreshing}
-        onRefresh={refresh}
+        isRefreshing={isRefreshing || contacts.isRefreshing}
+        onRefresh={() => {
+          refresh();
+          contacts.refresh();
+        }}
       >
         <SearchInput
           value={search}
@@ -106,6 +115,21 @@ export function InboxView() {
               },
             ]}
           />
+
+          <div className="space-y-2">
+            <h2 className="text-[13px] font-semibold text-ink">Karar vericiler</h2>
+            {contacts.isLoading ? (
+              <ReplyTableSkeleton rows={3} />
+            ) : contacts.error && !contacts.data ? (
+              <ConnectionError
+                message={contacts.error}
+                onRetry={contacts.refresh}
+                endpoint="/api/contacts"
+              />
+            ) : (
+              <DecisionMakersTable items={contacts.data?.items ?? []} />
+            )}
+          </div>
 
           <Card className="p-4">
             <div className="flex flex-wrap items-center gap-1.5 pb-3">
@@ -169,8 +193,7 @@ export function InboxView() {
             <EmptyState
               icon={Inbox}
               title="Gelen kutusu boş"
-              description="Kampanya yanıtları geldikçe AI bunları sınıflandırıp burada listeleyecek. Arayüzü örnek veriyle görmek için demo kayıtları ekleyebilirsiniz."
-              hint="python -m scripts.seed_inbox_demo"
+              description="Kampanya yanıtları geldikçe AI bunları sınıflandırıp burada listeleyecek. Karar vericiler Apollo’dan nitelikli şirketlere bağlanır; sahte kişi eklenmez."
             />
           ) : null}
 

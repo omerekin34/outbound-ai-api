@@ -4,8 +4,10 @@ import useSWR from "swr";
 
 import {
   ApiError,
+  fetchDecisionMakers,
   fetchInbox,
   fetchOpportunities,
+  type ContactListResponse,
   type InboxQuery,
   type InboxResponse,
   type OpportunitiesResponse,
@@ -77,6 +79,34 @@ export function useOpportunities(
     OpportunitiesResponse,
     unknown
   >(key, () => fetchOpportunities(query), {
+    refreshInterval: pollMs,
+    keepPreviousData: true,
+  });
+
+  return {
+    data: data ?? null,
+    error: error ? toMessage(error) : null,
+    isLoading,
+    isRefreshing: isValidating,
+    refresh: () => void mutate(),
+  };
+}
+
+export function useDecisionMakers(
+  query: Pick<InboxQuery, "limit" | "offset" | "search">,
+  pollMs = DEFAULT_POLL_MS,
+): RepliesState<ContactListResponse> {
+  const key = [
+    "contacts",
+    query.limit ?? null,
+    query.offset ?? null,
+    query.search ?? null,
+  ] as const;
+
+  const { data, error, isLoading, isValidating, mutate } = useSWR<
+    ContactListResponse,
+    unknown
+  >(key, () => fetchDecisionMakers(query), {
     refreshInterval: pollMs,
     keepPreviousData: true,
   });

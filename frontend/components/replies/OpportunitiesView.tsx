@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SearchInput } from "@/components/replies/SearchInput";
 import { StatTiles } from "@/components/replies/StatTiles";
+import { DecisionMakersTable } from "@/components/replies/DecisionMakersTable";
 import {
   ConnectionError,
   EmptyState,
@@ -16,7 +17,7 @@ import {
 } from "@/components/replies/ReplyStates";
 import { ReplyTable } from "@/components/replies/ReplyTable";
 import { formatNumber } from "@/lib/format";
-import { useOpportunities } from "@/lib/useReplies";
+import { useDecisionMakers, useOpportunities } from "@/lib/useReplies";
 
 const PAGE_SIZE = 25;
 
@@ -28,14 +29,22 @@ export function OpportunitiesView() {
     offset: 0,
     search: search.trim() || null,
   });
+  const contacts = useDecisionMakers({
+    limit: PAGE_SIZE,
+    offset: 0,
+    search: search.trim() || null,
+  });
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Fırsatlar"
-        subtitle="AI'ın olumlu olarak sınıflandırdığı yanıtlar, şirket puanına göre sıralı."
-        isRefreshing={isRefreshing}
-        onRefresh={refresh}
+        subtitle="Apollo’dan bulunan karar vericiler ve olumlu yanıtlar. Sahte isim yok."
+        isRefreshing={isRefreshing || contacts.isRefreshing}
+        onRefresh={() => {
+          refresh();
+          contacts.refresh();
+        }}
       >
         <SearchInput
           value={search}
@@ -68,11 +77,11 @@ export function OpportunitiesView() {
                 caption: "Olumlu ve toplantı talebi yanıtları",
               },
               {
-                key: "companies",
-                label: "Şirket",
-                value: formatNumber(data.unique_companies),
+                key: "decision-makers",
+                label: "Karar verici",
+                value: formatNumber(contacts.data?.total ?? 0),
                 icon: Building2,
-                caption: "Fırsat oluşan tekil şirket",
+                caption: "Apollo’dan kaydedilen kişiler",
               },
               {
                 key: "score",
@@ -90,6 +99,22 @@ export function OpportunitiesView() {
             ]}
           />
 
+          <div className="space-y-2">
+            <h2 className="text-[13px] font-semibold text-ink">Karar vericiler</h2>
+            {contacts.isLoading ? (
+              <ReplyTableSkeleton rows={3} />
+            ) : contacts.error && !contacts.data ? (
+              <ConnectionError
+                message={contacts.error}
+                onRetry={contacts.refresh}
+                endpoint="/api/contacts"
+              />
+            ) : (
+              <DecisionMakersTable items={contacts.data?.items ?? []} />
+            )}
+          </div>
+
+          <h2 className="text-[13px] font-semibold text-ink">Olumlu yanıtlar</h2>
           {data.items.length === 0 ? (
             search.trim() ? (
               <Card className="p-8">

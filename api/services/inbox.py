@@ -24,13 +24,17 @@ from api.models import (
     Contact,
     Interaction,
     Score,
+    normalized_status,
 )
 from api.schemas import (
     ClassificationCount,
+    ContactListOut,
+    ContactOut,
     InboxResponse,
     OpportunitiesResponse,
     ReplyOut,
 )
+from api.services.scoring import DEEP_RESEARCH_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -295,3 +299,72 @@ def count_positive_replies(db: Session) -> tuple[int, int]:
         logger.warning("interactions tablosu okunamadı: %s", exc)
         return 0, 0
     return row[0] or 0, row[1] or 0
+
+
+def fetch_contacts(
+    db: Session,
+    *,
+    limit: int,
+    offset: int,
+    search: str | None = None,
+    qualified_only: bool = True,
+) -> ContactListOut:
+    """Neon `contacts` satırları — demo yok, yalnızca kaydedilmiş karar vericiler."""
+    query = (
+        select(
+            Contact.id,
+            Contact.company_id,
+            Contact.first_name,
+            Contact.last_name,
+            Contact.title,
+            Contact.email,
+            Contact.linkedin_url,
+            Company.name.label("company_name"),
+            Company.domain.label("company_domain"),
+            Company.status.label("company_status"),
+        )
+        .join(Company, Company.id == Contact.company_id)
+    )
+    if qualified_only:
+        query = query.where(normalized_status(Company.status).in_(DEEP_RESEARCH_STATUSES))
+    if search and search.strip():
+        pattern = f"%{search.strip().lower()}%"
+        query = query.where(
+            or_(
+                func.lower(func.coalesce(Company.name, "")).like(pattern),
+                func.lower(func.coalesce(Contact.first_name, "")).like(pattern),
+                func.lower(func.coalesce(Contact.last_name, "")).like(pattern),
+                func.lower(func.coalesce(Contact.title, "")).like(pattern),
+                func.lower(func.coalesce(Contact.email, "")).like(pattern),
+            )
+        )
+
+    total = db.execute(
+        select(func.count()).select_from(query.order_by(None).subquery())
+    ).scalar() or 0
+
+    rows = db.execute(
+        query.order_by(Company.name.asc().nullslast(), Contact.last_name.asc().nullslast())
+        .limit(limit)
+        .offset(offset)
+    ).all()
+
+    items = []
+    for row in rows:
+        parts = [part for part in (row.first_name, row.last_name) if part and part.strip()]
+        items.append(
+            ContactOut(
+                id=row.id,
+                company_id=row.company_id,
+                company_name=row.company_name,
+                company_domain=row.company_domain,
+                company_status=row.company_status,
+                first_name=row.first_name,
+                last_name=row.last_name,
+                name=" ".join(parts) or None,
+                title=row.title,
+                email=row.email,
+                linkedin_url=row.linkedin_url,
+            )
+        )
+    return ContactListOut(items=items, total=total, limit=limit, offset=offset)

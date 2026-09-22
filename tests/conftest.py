@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from api.database import Base, get_db
 from api.index import app
 from api.services import activity as activity_service
+from api.services import apollo as apollo_service
 from api.services import enrichment
 
 
@@ -28,13 +29,18 @@ def no_real_network(monkeypatch) -> None:
 
     monkeypatch.setattr(enrichment, "_build_firecrawl", explode)
     monkeypatch.setattr(enrichment, "_build_openai", explode)
+    monkeypatch.setattr(apollo_service.ApolloClient, "_request", explode)
+    # .env'de anahtar olsa bile testler gerçek Apollo istemcisi kurmaz.
+    monkeypatch.setattr(apollo_service, "_build_client", lambda: None)
 
 
 @pytest.fixture
-def db_sessionmaker(tmp_path) -> Iterator[Any]:
+def db_sessionmaker(tmp_path, monkeypatch) -> Iterator[Any]:
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
-    yield sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    maker = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    monkeypatch.setattr(activity_service, "SessionLocal", maker)
+    yield maker
     engine.dispose()
 
 

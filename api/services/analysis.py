@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api import models
+from api.services.apollo import find_decision_makers
 from api.services.scoring import SCORE_VERSION, Scores, calculate_scores
 
 
@@ -144,4 +145,7 @@ def persist_analysis(
     # gerçeği yansıtır, LLM skorunu değil.
     db.flush()
     scores = score_company(db, company.id)
+    # Step 13 + 20: yalnızca nitelikli / yüksek öncelikli şirketlerde Apollo.
+    if scores.requires_deep_research:
+        find_decision_makers(db, company)
     return written, scores

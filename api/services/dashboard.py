@@ -47,6 +47,7 @@ EVENT_LABELS = {
     "company_discovery": "Şirket keşfi",
     "website_research": "Web sitesi taraması",
     "ai_analysis": "AI analizi",
+    "decision_maker_search": "Karar verici araması",
 }
 
 

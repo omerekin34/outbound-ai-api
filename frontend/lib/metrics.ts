@@ -103,6 +103,7 @@ const EVENT_LABELS: Record<string, string> = {
   company_discovery: "Şirket araştırması",
   website_research: "Web sitesi taraması",
   ai_analysis: "AI analizi",
+  decision_maker_search: "Karar verici araması",
 };
 
 const STATUS_SUFFIX: Record<Activity["status"], string> = {
@@ -116,6 +117,7 @@ const EVENT_ICONS: Record<string, LucideIcon> = {
   company_discovery: Building2,
   website_research: Mail,
   ai_analysis: CalendarClock,
+  decision_maker_search: MailOpen,
 };
 
 export interface ActivityView {
