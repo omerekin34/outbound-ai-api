@@ -51,6 +51,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = _env(name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def _env_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     raw = _env(name)
     if not raw:
@@ -127,6 +137,8 @@ class Settings:
     research_chars_per_page: int
     research_total_chars: int
     research_scrape_timeout_seconds: int
+    #: n8n toplu gönderiminde şirketler arası bekleme; 0 kapatır.
+    research_job_gap_seconds: float
 
     @property
     def masked_database_url(self) -> str:
@@ -181,4 +193,5 @@ def get_settings() -> Settings:
         research_chars_per_page=_env_int("RESEARCH_CHARS_PER_PAGE", 2_500),
         research_total_chars=_env_int("RESEARCH_TOTAL_CHARS", 30_000),
         research_scrape_timeout_seconds=_env_int("RESEARCH_SCRAPE_TIMEOUT", 180),
+        research_job_gap_seconds=_env_float("RESEARCH_JOB_GAP_SECONDS", 5.0),
     )

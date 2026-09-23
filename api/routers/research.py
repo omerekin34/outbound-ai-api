@@ -2,27 +2,15 @@
 
 from __future__ import annotations
 
-import threading
-
 from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy.orm import Session
 
 from api.database import get_db
 from api.schemas import DomainResearchRequest, ResearchAcceptedOut
 from api.services import research_job
+from api.services.research_queue import enqueue_research_job
 
 router = APIRouter(tags=["research"])
-
-
-def enqueue_research_job(company_id: str, website: str) -> None:
-    """BackgroundTask yalnızca thread açar; tarama yanıtı tutmaz."""
-    thread = threading.Thread(
-        target=research_job.run_research_job,
-        args=(company_id, website),
-        daemon=True,
-        name=f"research-{company_id[:12]}",
-    )
-    thread.start()
 
 
 @router.post(

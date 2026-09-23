@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import uuid
 
 from sqlalchemy import or_, select
@@ -26,6 +27,8 @@ from api.services.website_research import MAX_PAGES, research_website
 logger = logging.getLogger(__name__)
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
+# Firecrawl / OpenAI / Apollo aynı anda tek hattı paylaşır.
+_pipeline_lock = threading.Lock()
 
 
 class ResearchJobError(Exception):
@@ -132,23 +135,24 @@ def execute_research_pipeline(
         except ValueError:
             pass
 
-    result = research_website(
-        firecrawl_client(),
-        website,
-        max_pages=max_pages,
-        map_limit=settings.research_map_limit,
-        timeout_seconds=settings.research_scrape_timeout_seconds,
-    )
-    if not result.scraped_pages:
-        raise ResearchJobError(
-            f"Hedef sayfaların hiçbiri taranamadı "
-            f"({len(result.selected_pages)} sayfa denendi)."
+    with _pipeline_lock:
+        result = research_website(
+            firecrawl_client(),
+            website,
+            max_pages=max_pages,
+            map_limit=settings.research_map_limit,
+            timeout_seconds=settings.research_scrape_timeout_seconds,
         )
+        if not result.scraped_pages:
+            raise ResearchJobError(
+                f"Hedef sayfaların hiçbiri taranamadı "
+                f"({len(result.selected_pages)} sayfa denendi)."
+            )
 
-    extraction = analyze_scraped_pages(company.name or "", result.scraped_pages)
-    facts_saved, scores = persist_analysis(
-        db, company, extraction, source_type="website"
-    )
+        extraction = analyze_scraped_pages(company.name or "", result.scraped_pages)
+        facts_saved, scores = persist_analysis(
+            db, company, extraction, source_type="website"
+        )
     return result, extraction, facts_saved, scores
 
 
