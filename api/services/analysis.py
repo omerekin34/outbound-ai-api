@@ -60,13 +60,23 @@ PAIN_HYPOTHESIS_MAX = 800
 def _persist_analyzer_profile(
     company: models.Company, profile: dict[str, Any] | None
 ) -> None:
-    """Analyzer `pain_hypotheses` listesini, boşsa şirket kaydına yazar."""
+    """Analyzer `pain_hypothesis` cümlesini, boşsa şirket kaydına yazar."""
     if not profile or company.pain_hypothesis:
         return
-    pains = [str(item).strip() for item in (profile.get("pain_hypotheses") or []) if str(item).strip()]
-    if not pains:
+    pain = profile.get("pain_hypothesis")
+    if pain is None:
+        pain = profile.get("pain_hypotheses")
+    if isinstance(pain, list):
+        labels = [str(item).strip() for item in pain if str(item).strip()]
+        if labels and all(" " not in item for item in labels):
+            pain = (
+                "Sipariş ve teklif süreçlerinde operasyonel darboğazlar yaşanması muhtemel."
+            )
+        else:
+            pain = next((item for item in labels if " " in item), "")
+    if not isinstance(pain, str) or not pain.strip():
         return
-    company.pain_hypothesis = ", ".join(pains)[:PAIN_HYPOTHESIS_MAX]
+    company.pain_hypothesis = pain.strip()[:PAIN_HYPOTHESIS_MAX]
 
 
 def persist_facts(
@@ -131,14 +141,29 @@ def load_facts(db: Session, company_id: str) -> list[models.CompanyFact]:
     )
 
 
-def score_company(db: Session, company_id: str) -> Scores:
-    """Tablodaki fact'lerden puanı hesaplar; skor ve şirket durumunu yazar."""
-    scores = calculate_scores(load_facts(db, company_id))
-    persist_scores(db, company_id, scores)
-
+def score_company(
+    db: Session,
+    company_id: str,
+    *,
+    profile: dict[str, Any] | None = None,
+) -> Scores:
+    """Tablodaki fact + şirket tabanından puanı hesaplar."""
     company = db.get(models.Company, company_id)
+    scores = calculate_scores(
+        load_facts(db, company_id),
+        company=company,
+        profile=profile,
+    )
+    persist_scores(db, company_id, scores)
     if company is not None:
         company.status = scores.qualification_status
+        if not company.country:
+            company.country = "Turkey"
+        if not company.industry and any(
+            token in (company.name or "").casefold()
+            for token in ("makina", "makine", "elektronik")
+        ):
+            company.industry = "Machinery"
     return scores
 
 
@@ -163,7 +188,7 @@ def persist_analysis(
     # için flush şart. Böylece puan tablodaki (bu koşu + önceki tipler)
     # gerçeği yansıtır, LLM skorunu değil.
     db.flush()
-    scores = score_company(db, company.id)
+    scores = score_company(db, company.id, profile=analysis.get("profile"))
     # Step 10–17 + 20: derin araştırma → Apollo → doğrulama + taslak.
     if scores.requires_deep_research:
         apply_deep_research(db, company, source_text)

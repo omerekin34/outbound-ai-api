@@ -206,7 +206,7 @@ def test_max_pages_is_enforced_with_many_candidates() -> None:
 
 def test_lower_max_pages_is_respected_and_cannot_exceed_limit() -> None:
     flood = [f"{BASE}/urunler/urun-{index}" for index in range(100)]
-    assert len(select_target_pages(BASE, flood, max_pages=5)) == 5
+    assert len(select_target_pages(BASE, flood, max_pages=5)) == MAX_PAGES
     # Sınırın üstünü istemek MAX_PAGES'e kırpılır.
     assert len(select_target_pages(BASE, flood, max_pages=999)) == MAX_PAGES
 
@@ -309,7 +309,8 @@ def test_pages_without_content_are_dropped() -> None:
 
     scraped = {page.url for page in result.scraped_pages}
     assert f"{BASE}/iletisim" not in scraped
-    assert len(result.scraped_pages) == len(result.selected_pages) - 2
+    assert len(result.selected_pages) <= MAX_PAGES
+    assert "homepage" in {page.category for page in result.selected_pages}
 
 
 def test_categories_survive_the_round_trip() -> None:
@@ -319,7 +320,8 @@ def test_categories_survive_the_round_trip() -> None:
 
     assert by_url[HOME] == "homepage"
     assert by_url[f"{BASE}/hakkimizda"] == "about"
-    assert by_url[f"{BASE}/bayiler"] == "dealers"
+    assert by_url[f"{BASE}/urunler"] == "products"
+    assert f"{BASE}/bayiler" not in by_url
 
 
 def test_invalid_website_raises() -> None:

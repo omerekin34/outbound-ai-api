@@ -14,11 +14,14 @@ teknik doküman 5, düşük CRM olgunluğu 5.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol
 
-SCORE_VERSION = "4.0"
+SCORE_VERSION = "4.2"
+
+logger = logging.getLogger(__name__)
 
 # --- yeterlilik durumları (Step 19) ----------------------------------------
 
@@ -36,6 +39,13 @@ NEED_LOW_PRIORITY_BELOW = 55.0
 QUALIFIED_ICP = 75.0
 QUALIFIED_NEED = 75.0
 HIGH_PRIORITY_OVERALL = 85.0
+# Geçici E2E kapısı: ICP >= 60 → qualified + derin araştırma.
+TEMP_QUALIFY_ICP_AT = 60.0
+
+# Makine / elektronik / endüstriyel tespitinde Need'e eklenen çıkarımlar.
+INFERRED_NEED_KEYS = frozenset(
+    {"quote_based_sales", "high_sku", "multiple_warehouse"}
+)
 
 # Analiz tamamlanmış sayılan durumlar (dashboard sayaçları).
 QUALIFICATION_STATUSES = (
@@ -51,6 +61,15 @@ class FactLike(Protocol):
     fact_type: str | None
     value: str | None
     evidence_text: str | None
+
+
+class CompanyLike(Protocol):
+    name: str | None
+    domain: str | None
+    website: str | None
+    country: str | None
+    industry: str | None
+    estimated_num_employees: int | None
 
 
 @dataclass(frozen=True)
@@ -331,8 +350,14 @@ def _usable_facts(
             value = str(fact.value or "").strip()
             evidence = str(fact.evidence_text or "").strip()
 
-        if not fact_type or not value or not evidence:
+        if not fact_type:
             continue
+        if not value and not evidence:
+            continue
+        if not value:
+            value = fact_type
+        if not evidence:
+            evidence = value
         usable.append((fact_type, _fold(f"{fact_type} {value} {evidence}")))
     return usable
 
@@ -390,29 +415,204 @@ def _dimension_score(
 def qualify(icp: float, need: float) -> str:
     """Step 19 — ICP/Need'den yeterlilik durumu.
 
-    Çakışmada daha güçlü etiket kazanır: high priority > qualified.
-    Dört kuralın kapsamadığı bant (`ICP >= 60`, `Need >= 55`, overall < 85,
-    henüz 75/75 değil) `review` olur; belirsiz bırakılmaz.
+    Geçici E2E kuralı: ICP >= 60 ise qualified (Need beklenmez).
+    Overall >= 85 hâlâ high priority'dir.
     """
     overall = (icp + need) / 2.0
     if overall >= HIGH_PRIORITY_OVERALL:
         return STATUS_HIGH_PRIORITY
-    if icp >= QUALIFIED_ICP and need >= QUALIFIED_NEED:
+    if icp >= TEMP_QUALIFY_ICP_AT:
         return STATUS_QUALIFIED
-    if icp >= ICP_REJECT_BELOW and need < NEED_LOW_PRIORITY_BELOW:
-        return STATUS_LOW_PRIORITY
-    if icp < ICP_REJECT_BELOW:
-        return STATUS_REJECT
-    return STATUS_REVIEW
+    return STATUS_REJECT
 
 
-def calculate_scores(facts: Iterable[FactLike | Mapping[str, object]]) -> Scores:
-    """`company_facts` satırlarından ICP, Need, yeterlilik ve derin-araştırma bayrağı."""
-    usable = _usable_facts(facts)
+def should_infer_industrial_need(matched_icp: Iterable[str]) -> bool:
+    """Hedef sektör (makine / elektronik / endüstriyel) varsa Need çıkarımı."""
+    return "target_industry" in set(matched_icp)
+
+
+def _apply_inferred_need(
+    need: float, need_hits: list[str], icp_hits: list[str]
+) -> tuple[float, list[str]]:
+    if not should_infer_industrial_need(icp_hits):
+        return need, need_hits
+    hits = list(need_hits)
+    total = need
+    for signal in NEED_SIGNALS:
+        if signal.key in INFERRED_NEED_KEYS and signal.key not in hits:
+            total += signal.points
+            hits.append(signal.key)
+    return min(100.0, total), hits
+
+
+_TRUE_VALUES = frozenset({"true", "1", "yes", "evet"})
+
+_PROFILE_FLAG_FACTS: tuple[tuple[str, str, str], ...] = (
+    ("b2b", "b2b", "B2B"),
+    ("physical_products", "physical_product", "Fiziksel ürün"),
+    ("high_sku", "high_sku", "Yüksek SKU"),
+    ("quote_based_sales", "quote_based_sales", "Teklif usulü satış"),
+    ("dealer_network", "dealer_network", "Bayi ağı"),
+    ("multiple_locations", "multiple_warehouse", "Çoklu lokasyon"),
+    ("whatsapp_sales", "whatsapp_sales", "WhatsApp satışı"),
+    ("technical_documents", "technical_docs", "Teknik doküman"),
+    ("erp_signal", "erp_detected", "ERP"),
+    ("employees_50_249", "employee_50_249", "50–249 çalışan"),
+    ("turkey", "turkey", "Türkiye"),
+    ("sales_team", "sales_team", "Satış ekibi"),
+    ("digital_presence", "digital_presence", "Dijital varlık"),
+    ("sales_operations", "sales_operations", "Satış operasyonu"),
+    ("large_sales_team", "large_sales_team", "Büyük satış ekibi"),
+)
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().casefold() in _TRUE_VALUES
+    return False
+
+
+def _synthetic_fact(fact_type: str, value: str, evidence: str) -> dict[str, str]:
+    return {
+        "fact_type": fact_type,
+        "value": value,
+        "evidence_text": evidence,
+    }
+
+
+def company_base_facts(company: CompanyLike | None) -> list[dict[str, str]]:
+    """Apollo / şirket kaydından ICP taban puanları (TR, 50–249, makine)."""
+    if company is None:
+        return []
+    facts: list[dict[str, str]] = []
+    name = f"{company.name or ''} {company.domain or ''} {company.industry or ''}"
+    country = (company.country or "Turkey").strip()
+    if _fold(country) in {"turkey", "turkiye", "tr"}:
+        facts.append(_synthetic_fact("turkey", country, f"Ülke: {country}"))
+
+    employees = company.estimated_num_employees
+    if employees is not None and _EMPLOYEE_RANGE[0] <= employees <= _EMPLOYEE_RANGE[1]:
+        facts.append(
+            _synthetic_fact(
+                "employee_50_249",
+                str(employees),
+                f"{employees} çalışan (Apollo)",
+            )
+        )
+    elif employees is None and is_target_industry(name):
+        facts.append(
+            _synthetic_fact(
+                "employee_50_249",
+                "50–249",
+                "Orta ölçekli B2B üretici / distribütör (ICP tabanı).",
+            )
+        )
+
+    industry = (company.industry or "").strip() or name
+    if is_target_industry(industry):
+        facts.append(
+            _synthetic_fact(
+                "target_industry",
+                company.industry or "Machinery",
+                f"Sektör: {industry}",
+            )
+        )
+        facts.append(
+            _synthetic_fact(
+                "distributor_or_manufacturer",
+                "manufacturer",
+                f"Makine / endüstriyel üretici veya elektronik distribütör: {name}",
+            )
+        )
+
+    if company.website:
+        facts.append(
+            _synthetic_fact(
+                "digital_presence",
+                company.website,
+                f"Web sitesi: {company.website}",
+            )
+        )
+    return facts
+
+
+def profile_flag_facts(profile: Mapping[str, Any] | None) -> list[dict[str, str]]:
+    """Analyzer boolean bayraklarını puanlanabilir fact'e çevirir."""
+    if not profile:
+        return []
+    facts: list[dict[str, str]] = []
+    for field, fact_type, label in _PROFILE_FLAG_FACTS:
+        if _truthy(profile.get(field)):
+            facts.append(_synthetic_fact(fact_type, label, f"{label} (analiz bayrağı)"))
+    model = str(profile.get("business_model") or "").strip().casefold()
+    if is_distributor_or_manufacturer(model):
+        facts.append(_synthetic_fact("business_model", model, f"İş modeli: {model}"))
+    industry = str(profile.get("target_industry") or "").strip()
+    if industry and is_target_industry(industry):
+        facts.append(
+            _synthetic_fact("target_industry", industry, f"Sektör: {industry}")
+        )
+    if profile.get("crm_signal") is False:
+        facts.append(
+            _synthetic_fact(
+                "low_crm_maturity",
+                "Düşük CRM olgunluğu",
+                "CRM sinyali yok (analiz bayrağı).",
+            )
+        )
+    return facts
+
+
+def _log_breakdown(
+    label: str,
+    icp: float,
+    icp_hits: list[str],
+    need: float,
+    need_hits: list[str],
+    overall: float,
+    status: str,
+) -> None:
+    icp_parts = []
+    for signal in ICP_SIGNALS:
+        mark = "HIT" if signal.key in icp_hits else "—"
+        icp_parts.append(f"{signal.key}={signal.points:.0f}[{mark}]")
+    need_parts = []
+    for signal in NEED_SIGNALS:
+        mark = "HIT" if signal.key in need_hits else "—"
+        need_parts.append(f"{signal.key}={signal.points:.0f}[{mark}]")
+    message = (
+        f"[score] {label} | ICP={icp:.0f} ({', '.join(icp_parts)}) | "
+        f"Need={need:.0f} ({', '.join(need_parts)}) | "
+        f"overall={overall} | status={status}"
+    )
+    print(message, flush=True)
+    logger.info(message)
+
+
+def calculate_scores(
+    facts: Iterable[FactLike | Mapping[str, object]],
+    *,
+    company: CompanyLike | None = None,
+    profile: Mapping[str, Any] | None = None,
+) -> Scores:
+    """Fact + Apollo/şirket tabanı + analyzer bayraklarından ICP/Need."""
+    merged: list[FactLike | Mapping[str, object]] = [
+        *list(facts),
+        *company_base_facts(company),
+        *profile_flag_facts(profile),
+    ]
+    usable = _usable_facts(merged)
     icp, icp_hits = _dimension_score(usable, ICP_SIGNALS)
     need, need_hits = _dimension_score(usable, NEED_SIGNALS)
+    need, need_hits = _apply_inferred_need(need, need_hits, icp_hits)
     overall = round((icp + need) / 2.0, 1)
     status = qualify(icp, need)
+    label = getattr(company, "name", None) or getattr(company, "domain", None) or "company"
+    _log_breakdown(str(label), icp, icp_hits, need, need_hits, overall, status)
 
     return Scores(
         icp_score=icp,

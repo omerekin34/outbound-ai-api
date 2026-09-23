@@ -5,7 +5,7 @@ Spec:
   2. Site kör biçimde taranmaz; Firecrawl `map` ile URL'ler keşfedilir ve
      yalnızca hedef sayfalar (anasayfa, hakkında, ürünler, iletişim, bayiler,
      katalog, markalar, çözümler) seçilerek taranır.
-  3. Taranan sayfa sayısı hiçbir koşulda `MAX_PAGES` (20) değerini geçemez.
+  3. Taranan sayfa sayısı hiçbir koşulda `MAX_PAGES` (3) değerini geçemez.
   4. Toplanan içerik AI Company Analyzer'a verilerek yapılandırılmış fact ve
      kanıt (evidence) üretilir — bu adım `services/enrichment.py` içindedir.
 
@@ -24,8 +24,8 @@ from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlparse, urlun
 
 logger = logging.getLogger(__name__)
 
-# Spec kuralı: Workflow 3 tek çalıştırmada en fazla 20 sayfa tarar.
-MAX_PAGES = 20
+# Maliyet kuralı: yalnızca anasayfa, hakkında, ürünler. Asla 3'ü geçme.
+MAX_PAGES = 3
 
 HOMEPAGE = "homepage"
 
@@ -35,11 +35,6 @@ CATEGORY_ORDER: tuple[str, ...] = (
     HOMEPAGE,
     "about",
     "products",
-    "contact",
-    "dealers",
-    "catalog",
-    "brands",
-    "solutions",
 )
 
 # URL segmentlerinde aranan anahtarlar. Türkçe siteler hedef olduğu için
@@ -119,13 +114,8 @@ CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
 # `map` hiçbir sonuç döndürmezse denenecek kanonik yollar (kategori başına bir
 # tahmin). Hâlâ hedefli bir istek listesidir; kör tarama yapılmaz.
 FALLBACK_PATHS: dict[str, tuple[str, ...]] = {
-    "about": ("/hakkimizda", "/about"),
-    "products": ("/urunler", "/products"),
-    "contact": ("/iletisim", "/contact"),
-    "dealers": ("/bayiler", "/dealers"),
-    "catalog": ("/katalog", "/catalog"),
-    "brands": ("/markalar", "/brands"),
-    "solutions": ("/cozumler", "/solutions"),
+    "about": ("/hakkimizda",),
+    "products": ("/urunler",),
 }
 
 # Metin içermeyen dosyalar taranmaz (kredi ve token israfı).
@@ -363,10 +353,9 @@ def classify_url(url: str, base_url: str) -> str | None:
     if not tokens:
         return HOMEPAGE
 
-    for category in CATEGORY_ORDER:
+    for category, keywords in _KEYWORD_FORMS.items():
         if category == HOMEPAGE:
             continue
-        keywords = _KEYWORD_FORMS[category]
         if any(token.startswith(keywords) for token in tokens):
             return category
     return None
@@ -391,9 +380,9 @@ def select_target_pages(
       * Önce her kategoriden en kanonik bir sayfa alınır (kapsama garantisi).
       * Kalan kontenjan kategori sırasına göre doldurulur.
       * Hiçbir kategoriye girmeyen URL'ler **hiç** taranmaz (kör tarama yok).
-      * Sonuç asla `max_pages` değerini geçmez.
+      * Sonuç asla 3 sayfayı geçmez (anasayfa, hakkında, ürünler).
     """
-    limit = max(1, min(max_pages, MAX_PAGES))
+    limit = MAX_PAGES
 
     base = normalize_url(base_url)
     if base is None:
@@ -562,7 +551,7 @@ def research_website(
     if base is None:
         raise ValueError(f"Geçersiz web sitesi adresi: {website!r}")
 
-    limit = max(1, min(max_pages, MAX_PAGES))
+    limit = MAX_PAGES
 
     candidates = discover_candidate_urls(client, base, map_limit)
     selected = select_target_pages(base, candidates, limit)

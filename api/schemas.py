@@ -72,8 +72,7 @@ class CompanyResearchRequest(BaseModel):
 
     company_id: str = Field(min_length=1, max_length=255)
     website: str = Field(min_length=4, max_length=2048)
-    # Spec: 20 kesin üst sınırdır; daha küçük bir değer verilebilir ama
-    # `le=MAX_PAGES` sayesinde aşılamaz.
+    # Üst sınır 3'tür (anasayfa, hakkında, ürünler).
     max_pages: int = Field(default=MAX_PAGES, ge=1, le=MAX_PAGES)
 
     @field_validator("website")

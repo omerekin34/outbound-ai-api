@@ -19,10 +19,8 @@ from api.services.enrichment import (
 from api.services.scoring import (
     SCORE_VERSION,
     STATUS_HIGH_PRIORITY,
-    STATUS_LOW_PRIORITY,
     STATUS_QUALIFIED,
     STATUS_REJECT,
-    STATUS_REVIEW,
     calculate_scores,
     qualify,
 )
@@ -59,7 +57,8 @@ def test_extraction_prompt_does_not_ask_for_scores() -> None:
     assert "requires_deep_research" not in prompt
     assert "ai commercial operations platform" in prompt
     assert '"physical_products"' in EXTRACTION_SYSTEM_PROMPT
-    assert '"pain_hypotheses"' in EXTRACTION_SYSTEM_PROMPT
+    assert '"pain_hypothesis"' in EXTRACTION_SYSTEM_PROMPT
+    assert "sektör çıkarımı" in prompt
     assert "50–249" in PRODUCT_CONTEXT
 
 
@@ -123,7 +122,7 @@ FULL_PROFILE = {
     "technical_documents": True,
     "erp_signal": True,
     "crm_signal": False,
-    "pain_hypotheses": ["quotation", "order_entry"],
+    "pain_hypothesis": "Sipariş ve teklif süreçlerinde operasyonel darboğazlar yaşanması muhtemel.",
     "employees_50_249": True,
     "target_industry": "machinery",
     "turkey": True,
@@ -143,7 +142,7 @@ FULL_PROFILE = {
         "technical_documents": _evidence("Datasheet"),
         "erp_signal": _evidence("SAP"),
         "crm_signal": _evidence("Excel ile takip"),
-        "pain_hypotheses": _evidence("Teklifler Excel'de"),
+        "pain_hypothesis": _evidence("Teklifler Excel'de"),
         "employees_50_249": _evidence("120 çalışan"),
         "target_industry": _evidence("machinery"),
         "turkey": _evidence("Türkiye"),
@@ -162,12 +161,14 @@ def test_profile_without_evidence_does_not_create_facts() -> None:
             "physical_products": True,
             "erp_signal": False,
             "crm_signal": False,
-            "pain_hypotheses": ["quotation"],
+            "pain_hypothesis": "Sipariş ve teklif süreçlerinde operasyonel darboğazlar yaşanması muhtemel.",
         },
         {f"{BASE}/"},
         f"{BASE}/",
     )
-    assert assembled["facts"] == []
+    types = {fact["fact_type"] for fact in assembled["facts"]}
+    assert "b2b" in types
+    assert "physical_product" in types
     assert assembled["profile"]["b2b"] is True
 
 
@@ -177,7 +178,7 @@ def test_structured_profile_scores_icp_and_need_to_100() -> None:
     assert scores.icp_score == 100
     assert scores.need_score == 100
     assert assembled["profile"]["business_model"] == "distributor"
-    assert assembled["profile"]["pain_hypotheses"] == ["quotation", "order_entry"]
+    assert "darboğaz" in assembled["profile"]["pain_hypothesis"]
 
 
 def test_crm_signal_true_blocks_low_crm_points() -> None:
@@ -205,6 +206,62 @@ def test_food_industry_does_not_score_target_industry() -> None:
     assert "target_industry" not in scores.matched_signals
 
 
+def test_apollo_company_base_adds_icp_points() -> None:
+    company = models.Company(
+        id="c-base",
+        name="Ünsal Makina",
+        domain="unsalmakina.com",
+        website="https://unsalmakina.com",
+        country="Turkey",
+        industry="Machinery",
+        estimated_num_employees=120,
+    )
+    scores = calculate_scores(
+        [
+            _fact("b2b", "B2B"),
+            _fact("physical_product", "Pres hattı"),
+            _fact("quote_based_sales", "true"),
+            _fact("high_sku", "true"),
+            _fact("multiple_warehouse", "true"),
+        ],
+        company=company,
+    )
+    assert scores.icp_score >= 75
+    assert scores.need_score >= 35
+    assert "turkey" in scores.matched_signals
+    assert "employee_50_249" in scores.matched_signals
+    assert "target_industry" in scores.matched_signals
+    assert scores.requires_deep_research is True
+
+
+def test_industrial_industry_infers_need_signals() -> None:
+    scores = calculate_scores(
+        [
+            _fact("b2b", "B2B"),
+            _fact("physical_product", "Pres hattı"),
+            _fact("target_industry", "Makina"),
+            _fact("turkey", "Türkiye"),
+            _fact("distributor_or_manufacturer", "Üretici"),
+        ]
+    )
+    assert scores.icp_score == 65  # 15+15+15+10+10
+    assert scores.need_score == 35  # quote 15 + sku 10 + locations 10
+    assert scores.qualification_status == STATUS_QUALIFIED
+    assert scores.requires_deep_research is True
+    assert {"quote_based_sales", "high_sku", "multiple_warehouse"} <= set(
+        scores.matched_signals
+    )
+
+
+def test_pain_labels_become_turkish_sentence() -> None:
+    assembled = assemble_analysis(
+        {"pain_hypotheses": ["quotation", "order_entry"], "target_industry": "unknown"},
+        {f"{BASE}/"},
+        f"{BASE}/",
+    )
+    assert assembled["profile"]["pain_hypothesis"].startswith("Sipariş ve teklif")
+
+
 def test_business_model_does_not_count_as_b2b() -> None:
     scores = calculate_scores(
         [_fact("business_model", "distributor", "Yetkili distributor ağı.")]
@@ -225,13 +282,20 @@ def test_empty_facts_score_zero_and_reject() -> None:
     assert scores.requires_deep_research is False
 
 
-def test_fact_without_evidence_does_not_affect_score() -> None:
+def test_fact_without_value_and_evidence_does_not_affect_score() -> None:
     scored = calculate_scores([_fact("dealer_network", "42 bayi", "42 yetkili bayi")])
     ignored = calculate_scores(
-        [{"fact_type": "dealer_network", "value": "42 bayi", "evidence_text": ""}]
+        [{"fact_type": "dealer_network", "value": "", "evidence_text": ""}]
     )
     assert scored.need_score == 10
     assert ignored.need_score == 0
+
+
+def test_boolean_flag_without_quote_still_scores() -> None:
+    scores = calculate_scores(
+        [{"fact_type": "quote_based_sales", "value": "true", "evidence_text": ""}]
+    )
+    assert scores.need_score == 15
 
 
 def test_icp_points_are_added_when_each_signal_is_found() -> None:
@@ -363,13 +427,14 @@ def test_same_facts_always_produce_the_same_scores() -> None:
     ("icp", "need", "expected"),
     [
         (50, 90, STATUS_REJECT),
-        (60, 40, STATUS_LOW_PRIORITY),
-        (70, 70, STATUS_REVIEW),
+        (60, 0, STATUS_QUALIFIED),
+        (60, 40, STATUS_QUALIFIED),
+        (70, 70, STATUS_QUALIFIED),
         (75, 75, STATUS_QUALIFIED),
         (80, 90, STATUS_HIGH_PRIORITY),  # avg 85
         (90, 80, STATUS_HIGH_PRIORITY),
-        (100, 50, STATUS_LOW_PRIORITY),
-        (74, 80, STATUS_REVIEW),
+        (100, 50, STATUS_QUALIFIED),
+        (74, 80, STATUS_QUALIFIED),
     ],
 )
 def test_qualification_matrix(icp: float, need: float, expected: str) -> None:
@@ -408,8 +473,8 @@ def test_deep_research_only_for_qualified_and_high_priority() -> None:
         ]
     )
     assert high.icp_score == 100
-    assert high.need_score == 70
-    assert high.overall_score == 85
+    assert high.need_score == 80  # mevcut 70 + çıkarım multiple_warehouse 10
+    assert high.overall_score == 90
     assert high.qualification_status == STATUS_HIGH_PRIORITY
     assert high.requires_deep_research is True
 
@@ -429,11 +494,11 @@ def test_deep_research_only_for_qualified_and_high_priority() -> None:
             _fact("multiple_warehouse", "Birden fazla depo"),
         ]
     )
-    # ICP 70, Need 80, overall 75 → review (not 75/75, not 85 avg)
+    # Geçici kapı: ICP 70 >= 60 → qualified + derin araştırma.
     assert qualified.icp_score == 70
     assert qualified.need_score == 80
-    assert qualified.qualification_status == STATUS_REVIEW
-    assert qualified.requires_deep_research is False
+    assert qualified.qualification_status == STATUS_QUALIFIED
+    assert qualified.requires_deep_research is True
 
 
 def test_qualified_band_sets_deep_research() -> None:
@@ -489,12 +554,12 @@ def test_persist_analysis_writes_scores_status_and_flag(db_sessionmaker) -> None
         )
         session.commit()
 
-        expected = calculate_scores(FAKE_ANALYSIS["facts"])
+        expected = calculate_scores(FAKE_ANALYSIS["facts"], company=company)
         assert written == 3
         assert scores.overall_score == pytest.approx(expected.overall_score)
         assert scores.overall_score != pytest.approx(99)
         assert scores.qualification_status == expected.qualification_status
-        assert scores.requires_deep_research is False
+        assert scores.requires_deep_research is expected.requires_deep_research
         assert scores.version == SCORE_VERSION
 
         stored = session.execute(
@@ -502,7 +567,7 @@ def test_persist_analysis_writes_scores_status_and_flag(db_sessionmaker) -> None
         ).scalar_one()
         assert stored.overall_score == pytest.approx(expected.overall_score)
         assert stored.qualification_status == expected.qualification_status
-        assert stored.requires_deep_research is False
+        assert stored.requires_deep_research is expected.requires_deep_research
         assert stored.version == SCORE_VERSION
 
         company = session.get(models.Company, COMPANY_ID)
@@ -534,10 +599,15 @@ def test_persist_analysis_seeds_pain_from_profile(db_sessionmaker) -> None:
             company,
             {
                 "facts": [_fact("b2b", "B2B")],
-                "profile": {"pain_hypotheses": ["quotation", "order_entry"]},
+                "profile": {
+                    "pain_hypothesis": (
+                        "Sipariş ve teklif süreçlerinde operasyonel "
+                        "darboğazlar yaşanması muhtemel."
+                    )
+                },
             },
             source_type="website",
         )
         session.commit()
         stored = session.get(models.Company, COMPANY_ID)
-        assert stored.pain_hypothesis == "quotation, order_entry"
+        assert "darboğaz" in (stored.pain_hypothesis or "")

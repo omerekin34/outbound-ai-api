@@ -182,7 +182,7 @@ def research_website_endpoint(
     1. `company_id` + `website` girdisi doğrulanır.
     2. Firecrawl `map` ile URL'ler keşfedilir, yalnızca hedef kategorilerdeki
        sayfalar seçilir (kör tarama yok).
-    3. En fazla `max_pages` (üst sınır 20) sayfa taranır.
+    3. En fazla 3 sayfa taranır (anasayfa, hakkında, ürünler).
     4. Toplanan içerik AI Company Analyzer'a verilir; fact ve kanıtlar kaydedilir.
     """
     company = _get_company_or_404(db, payload.company_id)

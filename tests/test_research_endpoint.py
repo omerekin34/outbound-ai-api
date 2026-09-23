@@ -220,14 +220,20 @@ def test_research_returns_targeted_pages_and_analysis(
 
     assert body["status"] == "success"
     assert body["website"] == HOME
-    assert body["max_pages"] == 20
+    assert body["max_pages"] == 3
     assert body["discovered_urls"] == len(SITE_URLS)
-    assert body["scraped_pages"] == len(SITE_URLS)
+    assert body["scraped_pages"] == 3
     assert body["used_fallback"] is False
 
     categories = {page["category"] for page in body["pages"]}
-    assert categories == {"homepage", "about", "products", "dealers", "contact"}
-    expected = calculate_scores(FAKE_ANALYSIS["facts"])
+    assert categories == {"homepage", "about", "products"}
+    company = models.Company(
+        name="Örnek Makina",
+        domain="ornekmakina.com.tr",
+        website=HOME,
+        country="Turkey",
+    )
+    expected = calculate_scores(FAKE_ANALYSIS["facts"], company=company)
     assert body["analysis"]["scores"]["overall_score"] == pytest.approx(
         expected.overall_score
     )
@@ -245,9 +251,10 @@ def test_analyzer_prompt_includes_every_page_url(
     )
     prompt = fake_openai.prompts[-1]
 
-    for url in SITE_URLS:
+    for url in (HOME, f"{BASE}/hakkimizda", f"{BASE}/urunler"):
         assert f"URL: {url}" in prompt
     assert "Örnek Makina" in prompt
+    assert f"{BASE}/bayiler" not in prompt
 
 
 def test_facts_are_persisted_with_page_level_evidence(
@@ -272,7 +279,7 @@ def test_facts_are_persisted_with_page_level_evidence(
         }
 
     # Kanıt, bulgunun alındığı asıl sayfaya bağlanır.
-    assert facts["dealer_network"].source_url == f"{BASE}/bayiler"
+    assert facts["dealer_network"].source_url == HOME
     assert facts["dealer_network"].evidence_text.startswith("Türkiye genelinde 42")
     assert facts["product_lines"].source_url == f"{BASE}/urunler"
     # Uydurma URL anasayfaya düşürüldü.
@@ -296,7 +303,7 @@ def test_scores_are_persisted_and_status_advances(
         ).scalar_one()
         company = session.get(models.Company, COMPANY_ID)
 
-        expected = calculate_scores(FAKE_ANALYSIS["facts"])
+        expected = calculate_scores(FAKE_ANALYSIS["facts"], company=company)
         assert score.overall_score == pytest.approx(expected.overall_score)
         assert score.icp_score == pytest.approx(expected.icp_score)
         assert score.version == SCORE_VERSION
@@ -343,7 +350,14 @@ def test_analyze_uses_backend_scores_not_llm_scores(
         },
     )
     assert response.status_code == 200, response.text
-    expected = calculate_scores(FAKE_ANALYSIS["facts"])
+    expected = calculate_scores(
+        FAKE_ANALYSIS["facts"],
+        company=models.Company(
+            name="Örnek Makina",
+            domain="ornekmakina.com.tr",
+            country="Turkey",
+        ),
+    )
     scores = response.json()["data"]["scores"]
     assert scores["overall_score"] == pytest.approx(expected.overall_score)
     assert scores["overall_score"] != pytest.approx(74.5)
@@ -368,7 +382,7 @@ def test_activity_log_records_the_run(
         ).scalars().all()[-1]
 
     assert log.status == "success"
-    assert log.detail["scraped_pages"] == len(SITE_URLS)
+    assert log.detail["scraped_pages"] == 3
 
 
 def test_only_target_pages_are_sent_to_firecrawl(
@@ -378,7 +392,11 @@ def test_only_target_pages_are_sent_to_firecrawl(
         "/api/companies/research-website",
         json={"company_id": COMPANY_ID, "website": BASE},
     )
-    assert set(fake_firecrawl.scraped_urls) == set(SITE_URLS)
+    assert set(fake_firecrawl.scraped_urls) == {
+        HOME,
+        f"{BASE}/hakkimizda",
+        f"{BASE}/urunler",
+    }
 
 
 def test_max_pages_is_passed_through(

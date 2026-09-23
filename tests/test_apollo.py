@@ -256,7 +256,7 @@ def test_persist_analysis_triggers_apollo_after_qualification(
         session.commit()
         contacts = session.execute(select(models.Contact)).scalars().all()
 
-    assert scores.qualification_status == STATUS_QUALIFIED
+    assert scores.qualification_status in {STATUS_QUALIFIED, STATUS_HIGH_PRIORITY}
     assert scores.requires_deep_research is True
     assert fake.calls == ["ornekmakina.com.tr"]
     assert len(contacts) == 1
@@ -276,7 +276,13 @@ def test_persist_analysis_skips_apollo_when_not_qualified(
         ),
     )
     with db_sessionmaker() as session:
-        company = _company(status="new")
+        company = _company(
+            status="new",
+            name="Random Soft",
+            domain="randomsoft.example",
+            website=None,
+            industry=None,
+        )
         session.add(company)
         session.commit()
         persist_analysis(session, company, {"facts": []}, source_type="website")

@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from api.config import get_settings
+from api.services.scoring import is_target_industry
 from api.services.website_research import ScrapedPage
 
 logger = logging.getLogger(__name__)
@@ -34,18 +35,24 @@ EXTRACTION_SYSTEM_PROMPT = """Sen bir B2B kanıt analistisin. Ürünümüz: AI C
 
 Sana bir şirketin web sitesinden taranmış sayfalar verilecek. Her sayfanın kategorisi ve URL'si belirtilmiştir.
 
-TEK GÖREVİN: sayfada GERÇEKTEN geçen kanıtlardan aşağıdaki JSON profilini çıkarmak.
+TEK GÖREVİN: sayfada geçen kanıtlardan ve sektör mantığından aşağıdaki JSON profilini çıkarmak.
 
 YAPMA:
 - ICP, Need, Timing, Reachability veya overall puanı HESAPLAMA.
 - `scores` alanı DÖNDÜRME.
-- Sayfada yazmayan bilgi uydurma (halüsinasyon yok).
+- Kişi, e-posta, ERP adı veya sayı uydurma.
 - URL uydurma.
-- Kanıtsız alanı true yapma. Kanıt yoksa false veya "unknown" yaz.
 
-`true` olan HER alan için `evidence` içinde birebir alıntı ZORUNLUDUR:
+SEKTÖR ÇIKARIMI (zorunlu): Makine / endüstriyel üretici veya elektronik distribütör tespit ettiysen
+Türk siteleri "ERP kullanıyoruz" / "teklif usulü çalışıyoruz" yazmasa bile şunları TRUE yap:
+- `quote_based_sales`
+- `high_sku`
+- `multiple_locations`
+evidence_text'e "Sektör çıkarımı: …" diye yaz; uydurma alıntı yapma.
+
+`true` olan diğer alanlar için `evidence` içinde birebir alıntı:
 - `value`: kısa, somut olgu
-- `evidence_text`: sayfadan BİREBİR cümle (kendi cümleni yazma)
+- `evidence_text`: sayfadan BİREBİR cümle veya sektör çıkarımı cümlesi
 - `source_url`: yalnızca verilen URL'lerden biri
 - `confidence`: 0.0–1.0
 
@@ -53,7 +60,8 @@ YAPMA:
 `target_industry` yalnızca makine / elektronik / endüstriyel ekipman kanıtı varsa (machinery | electronics | industrial_equipment | unknown).
 `business_model` yalnızca kanıt varsa: distributor | manufacturer | unknown.
 `crm_signal` true ise olgun bir CRM adı geçiyor demektir. CRM yok / Excel / manuel takip varsa false.
-`pain_hypotheses` yalnızca kanıta dayanan etiketler: quotation, order_entry, inventory, dealer_coordination.
+`pain_hypothesis`: TEK doğal Türkçe cümle. Dizi, etiket veya virgüllü liste YAZMA.
+Örnek: "Sipariş ve teklif süreçlerinde operasyonel darboğazlar yaşanması muhtemel."
 
 Çıktıyı TAM olarak bu JSON şemasıyla ver:
 {
@@ -68,7 +76,7 @@ YAPMA:
   "technical_documents": true,
   "erp_signal": false,
   "crm_signal": false,
-  "pain_hypotheses": ["quotation", "order_entry"],
+  "pain_hypothesis": "Sipariş ve teklif süreçlerinde operasyonel darboğazlar yaşanması muhtemel.",
   "employees_50_249": true,
   "target_industry": "machinery",
   "turkey": true,
@@ -205,6 +213,18 @@ _TARGET_INDUSTRY_VALUES = frozenset(
 _PAIN_LABELS = frozenset(
     {"quotation", "order_entry", "inventory", "dealer_coordination"}
 )
+DEFAULT_PAIN_HYPOTHESIS = (
+    "Sipariş ve teklif süreçlerinde operasyonel darboğazlar yaşanması muhtemel."
+)
+INFERRED_NEED_FACTS: tuple[tuple[str, str, str], ...] = (
+    ("quote_based_sales", "quote_based_sales", "Teklif usulü satış (sektör çıkarımı)"),
+    ("high_sku", "high_sku", "Yüksek SKU (sektör çıkarımı)"),
+    ("multiple_locations", "multiple_warehouse", "Çoklu lokasyon (sektör çıkarımı)"),
+)
+INFERRED_NEED_EVIDENCE = (
+    "Sektör çıkarımı: makine / elektronik / endüstriyel operasyonlarda "
+    "teklif usulü satış, geniş katalog ve birden fazla lokasyon varsayılır."
+)
 
 
 def _coerce_bool(value: Any) -> bool | None:
@@ -268,11 +288,6 @@ def normalize_profile(payload: dict[str, Any]) -> dict[str, Any]:
     industry = str(payload.get("target_industry") or "unknown").strip().casefold()
     if industry not in _TARGET_INDUSTRY_VALUES:
         industry = "unknown"
-    pains = [
-        str(item).strip().casefold()
-        for item in (payload.get("pain_hypotheses") or [])
-        if str(item).strip().casefold() in _PAIN_LABELS
-    ]
     return {
         "b2b": _coerce_bool(payload.get("b2b")) is True,
         "physical_products": _coerce_bool(payload.get("physical_products")) is True,
@@ -284,8 +299,8 @@ def normalize_profile(payload: dict[str, Any]) -> dict[str, Any]:
         "whatsapp_sales": _coerce_bool(payload.get("whatsapp_sales")) is True,
         "technical_documents": _coerce_bool(payload.get("technical_documents")) is True,
         "erp_signal": _coerce_bool(payload.get("erp_signal")) is True,
-        "crm_signal": _coerce_bool(payload.get("crm_signal")) is True,
-        "pain_hypotheses": pains,
+        "crm_signal": _coerce_bool(payload.get("crm_signal")),
+        "pain_hypothesis": _normalize_pain_hypothesis(payload),
         "employees_50_249": _coerce_bool(payload.get("employees_50_249")) is True,
         "target_industry": industry,
         "turkey": _coerce_bool(payload.get("turkey")) is True,
@@ -304,9 +319,12 @@ def profile_to_facts(
     for field, (fact_type, default_value) in PROFILE_BOOL_TO_FACT.items():
         if _coerce_bool(payload.get(field)) is not True:
             continue
-        evidence = _evidence_for(payload, field)
-        if evidence is None:
-            continue
+        evidence = _evidence_for(payload, field) or {
+            "value": default_value,
+            "evidence_text": f"{default_value} (analiz bayrağı).",
+            "confidence": 0.7,
+            "source_url": default_url,
+        }
         fact = _fact_from_evidence(
             fact_type, default_value, evidence, allowed_urls, default_url
         )
@@ -367,17 +385,15 @@ def profile_to_facts(
             if fact:
                 facts.append(fact)
 
-    pains = [
-        str(item).strip()
-        for item in (payload.get("pain_hypotheses") or [])
-        if str(item).strip().casefold() in _PAIN_LABELS
-    ]
-    if pains:
-        evidence = _evidence_for(payload, "pain_hypotheses")
+    pain = _normalize_pain_hypothesis(payload)
+    if pain:
+        evidence = _evidence_for(payload, "pain_hypothesis") or _evidence_for(
+            payload, "pain_hypotheses"
+        )
         if evidence is not None:
             fact = _fact_from_evidence(
-                "pain_hypotheses",
-                ", ".join(pains),
+                "pain_hypothesis",
+                pain,
                 evidence,
                 allowed_urls,
                 default_url,
@@ -385,7 +401,59 @@ def profile_to_facts(
             if fact:
                 facts.append(fact)
 
-    return facts
+    return _apply_industry_need_inference(facts, payload, default_url)
+
+
+def _normalize_pain_hypothesis(payload: dict[str, Any]) -> str:
+    raw = payload.get("pain_hypothesis")
+    if raw is None:
+        raw = payload.get("pain_hypotheses")
+    if isinstance(raw, str) and raw.strip():
+        text = raw.strip()
+        if "," in text and all(
+            part.strip().casefold() in _PAIN_LABELS for part in text.split(",") if part.strip()
+        ):
+            return DEFAULT_PAIN_HYPOTHESIS
+        return text
+    if isinstance(raw, list):
+        labels = [str(item).strip() for item in raw if str(item).strip()]
+        if labels and all(item.casefold() in _PAIN_LABELS for item in labels):
+            return DEFAULT_PAIN_HYPOTHESIS
+        sentences = [item for item in labels if " " in item]
+        if sentences:
+            return sentences[0]
+    return ""
+
+
+def _apply_industry_need_inference(
+    facts: list[dict[str, Any]],
+    payload: dict[str, Any],
+    default_url: str | None,
+) -> list[dict[str, Any]]:
+    """Makine / elektronik / endüstriyel profilde Need sinyallerini tamamlar."""
+    industry = str(payload.get("target_industry") or "").strip().casefold()
+    typed = any(
+        str(fact.get("fact_type") or "") in {"target_industry", "industries_served"}
+        and is_target_industry(f"{fact.get('value') or ''} {fact.get('evidence_text') or ''}")
+        for fact in facts
+    )
+    if industry not in _TARGET_INDUSTRY_VALUES and not typed:
+        return facts
+    have = {str(fact.get("fact_type") or "") for fact in facts}
+    extra: list[dict[str, Any]] = []
+    for _field, fact_type, value in INFERRED_NEED_FACTS:
+        if fact_type in have:
+            continue
+        extra.append(
+            {
+                "fact_type": fact_type,
+                "value": value,
+                "confidence": 0.7,
+                "evidence_text": INFERRED_NEED_EVIDENCE,
+                "source_url": default_url,
+            }
+        )
+    return facts + extra
 
 
 def _merge_facts(
@@ -528,4 +596,5 @@ def assemble_analysis(
         _normalize_facts(payload, allowed_urls, default_url),
         crm_signal=_coerce_bool(payload.get("crm_signal")),
     )
+    facts = _apply_industry_need_inference(facts, payload, default_url)
     return {"facts": facts, "profile": normalize_profile(payload)}

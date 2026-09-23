@@ -14,7 +14,7 @@ from api.services.deep_research import (
     erp_from_facts,
     parse_deep_research_payload,
 )
-from api.services.scoring import STATUS_QUALIFIED, STATUS_REJECT
+from api.services.scoring import STATUS_HIGH_PRIORITY, STATUS_QUALIFIED, STATUS_REJECT
 
 QUALIFIED_FACTS = [
     {"fact_type": key, "value": value, "evidence_text": f"{value} kanıtı", "confidence": 0.9}
@@ -198,7 +198,7 @@ def test_persist_analysis_writes_deep_research_when_qualified(
         session.commit()
         session.refresh(company)
 
-    assert scores.qualification_status == STATUS_QUALIFIED
+    assert scores.qualification_status in {STATUS_QUALIFIED, STATUS_HIGH_PRIORITY}
     assert scores.requires_deep_research is True
     assert fake.calls
     assert company.erp_signal == "SAP"
@@ -215,7 +215,13 @@ def test_persist_analysis_skips_deep_research_when_rejected(
         lambda: called.__setitem__("llm", called["llm"] + 1),
     )
     with db_sessionmaker() as session:
-        company = _company(status="new")
+        company = _company(
+            status="new",
+            name="Random Soft",
+            domain="randomsoft.example",
+            website=None,
+            industry=None,
+        )
         session.add(company)
         session.commit()
         persist_analysis(

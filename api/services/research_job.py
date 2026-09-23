@@ -126,7 +126,9 @@ def execute_research_pipeline(
     """Tara, fact çıkar, puanla; nitelikliyse Apollo kişilerini kaydet.
 
     `persist_analysis` Step 13/20 kapısını içerir.
+    Firecrawl her koşulda en fazla 3 sayfa tarar.
     """
+    max_pages = MAX_PAGES
     settings = get_settings()
     if company.website != website:
         company.website = website

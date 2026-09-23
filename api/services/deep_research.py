@@ -292,9 +292,10 @@ def apply_deep_research(
         erp = result.erp
         if erp.value == ERP_UNKNOWN:
             erp = erp_from_facts(facts) or unknown_erp()
-        pain = result.pain_hypothesis
+        pain = result.pain_hypothesis or company.pain_hypothesis
         _apply_erp(company, erp)
-        company.pain_hypothesis = pain
+        if result.pain_hypothesis:
+            company.pain_hypothesis = result.pain_hypothesis
 
         activity.succeed(
             f"{company.name}: ERP={erp.value}; kanıt={erp.evidence_count}.",
