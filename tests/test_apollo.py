@@ -300,6 +300,116 @@ def test_persona_rank_scores() -> None:
     assert persona_rank("Intern") == 0
 
 
+def test_apollo_api_key_strips_quotes_and_bearer(monkeypatch) -> None:
+    from api.services import apollo as apollo_mod
+
+    monkeypatch.setenv("APOLLO_API_KEY", 'Bearer "abc123"')
+    assert apollo_mod._apollo_api_key() == "abc123"
+
+
+def test_apollo_headers_include_api_key() -> None:
+    from api.services.apollo import ApolloClient
+
+    headers = ApolloClient("secret-key")._headers()
+    assert headers["x-api-key"] == "secret-key"
+    assert headers["Content-Type"] == "application/json"
+    assert headers["Cache-Control"] == "no-cache"
+
+
+def _apollo_http_error(status: int, payload: dict) -> Exception:
+    from api.services import apollo as apollo_mod
+
+    request = apollo_mod.httpx.Request(
+        "POST", "https://api.apollo.io/api/v1/mixed_people/api_search"
+    )
+    response = apollo_mod.httpx.Response(status, json=payload, request=request)
+    return apollo_mod.httpx.HTTPStatusError(
+        "error", request=request, response=response
+    )
+
+
+def test_apollo_search_posts_json_to_people_search(monkeypatch) -> None:
+    from api.services.apollo import ApolloClient
+
+    calls: list[dict] = []
+
+    def fake_request(self, method, path, *, json_body=None):
+        calls.append(
+            {
+                "method": method,
+                "path": path,
+                "json": json_body,
+                "headers": self._headers(),
+            }
+        )
+        return {
+            "people": [
+                {
+                    "id": "p1",
+                    "first_name": "Deniz",
+                    "last_name": "Korkmaz",
+                    "title": "Sales Director",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(ApolloClient, "_request", fake_request)
+    people = ApolloClient("k").search_people("unsalmakina.com", 8)
+    assert people[0]["title"] == "Sales Director"
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["path"] == "/mixed_people/api_search"
+    body = calls[0]["json"]
+    assert body["q_organization_domains_list"] == ["unsalmakina.com"]
+    assert "Sales Director" in body["person_titles"]
+    assert "General Manager" in body["person_titles"]
+    assert calls[0]["headers"]["x-api-key"] == "k"
+
+
+def test_apollo_search_falls_back_when_api_search_forbidden(monkeypatch) -> None:
+    from api.services.apollo import ApolloClient
+
+    def fake_request(self, method, path, *, json_body=None):
+        if path == "/mixed_people/api_search":
+            raise _apollo_http_error(403, {"error": "API_INACCESSIBLE"})
+        return {"people": [{"id": "p2", "first_name": "Ada"}]}
+
+    monkeypatch.setattr(ApolloClient, "_request", fake_request)
+    people = ApolloClient("k").search_people("ornek.com", 5)
+    assert people[0]["id"] == "p2"
+
+
+def test_apollo_search_uses_saved_contacts_when_people_api_blocked(monkeypatch) -> None:
+    from api.services.apollo import ApolloClient
+
+    def fake_request(self, method, path, *, json_body=None):
+        if path == "/contacts/search":
+            return {"contacts": [{"id": "c1", "first_name": "Ada", "title": "CEO"}]}
+        raise _apollo_http_error(
+            403, {"error": "The api is not included in your Basic (Trial) plan"}
+        )
+
+    monkeypatch.setattr(ApolloClient, "_request", fake_request)
+    people = ApolloClient("k").search_people("ornek.com", 5)
+    assert people[0]["id"] == "c1"
+
+
+def test_apollo_search_raises_plan_error_when_all_endpoints_forbidden(monkeypatch) -> None:
+    from api.services.apollo import ApolloClient, ApolloSearchError
+
+    def fake_request(self, method, path, *, json_body=None):
+        raise _apollo_http_error(
+            403, {"error": "The api is not included in your Basic (Trial) plan"}
+        )
+
+    monkeypatch.setattr(ApolloClient, "_request", fake_request)
+    try:
+        ApolloClient("k").search_people("ornek.com", 5)
+    except ApolloSearchError as exc:
+        assert "Basic (Trial)" in str(exc)
+    else:
+        raise AssertionError("ApolloSearchError bekleniyordu")
+
+
 def test_select_primary_contact_picks_highest_rank() -> None:
     low = models.Contact(id="a", title="IT Manager", email="a@x.com")
     high = models.Contact(id="b", title="Commercial Director", email="b@x.com")

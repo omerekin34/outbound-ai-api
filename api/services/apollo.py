@@ -9,6 +9,7 @@ puanlama akışını düşürmez.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urlparse
@@ -23,9 +24,12 @@ from api.config import get_settings
 from api.services.scoring import DEEP_RESEARCH_STATUSES
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 APOLLO_BASE = "https://api.apollo.io/api/v1"
+# Resmi People Search; 403 olursa eski `search`, sonra kayıtlı `contacts/search`.
+PEOPLE_SEARCH_PATHS = ("/mixed_people/api_search", "/mixed_people/search")
+CONTACTS_SEARCH_PATH = "/contacts/search"
+PEOPLE_ENRICH_PATH = "/people/bulk_match"
 CONTACT_ID_PREFIX = "apollo-"
 
 # Persona puanı (yüksek kazanır). Apollo araması bu unvanlarla sınırlıdır.
@@ -165,6 +169,38 @@ def _person_from_payload(raw: dict[str, Any]) -> ApolloPerson | None:
     )
 
 
+class ApolloSearchError(RuntimeError):
+    """Apollo People Search reddedildi — anahtar, kapsam veya plan."""
+
+
+def _apollo_api_key() -> str | None:
+    """Anahtarı istek anında okur; tırnak / Bearer önekini temizler."""
+    raw = (os.getenv("APOLLO_API_KEY") or get_settings().apollo_api_key or "").strip()
+    raw = raw.strip('"').strip("'")
+    if raw.lower().startswith("bearer "):
+        raw = raw[7:].strip().strip('"').strip("'")
+    return raw or None
+
+
+def _response_error_text(response: httpx.Response | None) -> str:
+    if response is None:
+        return ""
+    try:
+        payload = response.json()
+    except ValueError:
+        return (response.text or "")[:300]
+    if isinstance(payload, dict):
+        return str(
+            payload.get("error") or payload.get("error_code") or payload
+        )[:300]
+    return (response.text or "")[:300]
+
+
+def _people_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    people = payload.get("people") or payload.get("contacts") or []
+    return [row for row in people if isinstance(row, dict)]
+
+
 class ApolloClient:
     """Apollo REST istemcisi: people search + bulk enrich."""
 
@@ -175,6 +211,7 @@ class ApolloClient:
     def _headers(self) -> dict[str, str]:
         return {
             "x-api-key": self.api_key,
+            "X-Api-Key": self.api_key,
             "Content-Type": "application/json",
             "Cache-Control": "no-cache",
             "Accept": "application/json",
@@ -185,7 +222,6 @@ class ApolloClient:
         method: str,
         path: str,
         *,
-        params: list[tuple[str, str]] | None = None,
         json_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         url = f"{APOLLO_BASE}{path}"
@@ -194,10 +230,19 @@ class ApolloClient:
                 method,
                 url,
                 headers=self._headers(),
-                params=params,
-                json=json_body,
+                json=json_body or {},
                 timeout=self.timeout,
             )
+            if response.status_code >= 400:
+                logger.warning(
+                    "Apollo %s %s → %s (key_present=%s key_len=%d): %s",
+                    method,
+                    path,
+                    response.status_code,
+                    bool(self.api_key),
+                    len(self.api_key),
+                    _response_error_text(response),
+                )
             response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.warning("Apollo isteği başarısız (%s %s): %s", method, path, exc)
@@ -207,21 +252,56 @@ class ApolloClient:
             return {}
         return payload
 
-    def search_people(self, domain: str, per_page: int) -> list[dict[str, Any]]:
-        params: list[tuple[str, str]] = [
-            ("q_organization_domains_list[]", domain),
-            ("include_similar_titles", "true"),
-            ("per_page", str(per_page)),
-            ("page", "1"),
-        ]
-        for title in DECISION_MAKER_TITLES:
-            params.append(("person_titles[]", title))
-        for seniority in ("c_suite", "founder", "vp", "head", "director", "manager"):
-            params.append(("person_seniorities[]", seniority))
+    def _search_body(self, domain: str, per_page: int) -> dict[str, Any]:
+        return {
+            "q_organization_domains_list": [domain],
+            "person_titles": list(DECISION_MAKER_TITLES),
+            "person_seniorities": [
+                "owner",
+                "founder",
+                "c_suite",
+                "vp",
+                "head",
+                "director",
+                "manager",
+            ],
+            "include_similar_titles": True,
+            "page": 1,
+            "per_page": max(1, min(per_page, 100)),
+        }
 
-        payload = self._request("POST", "/mixed_people/api_search", params=params)
-        people = payload.get("people") or payload.get("contacts") or []
-        return [row for row in people if isinstance(row, dict)]
+    def search_people(self, domain: str, per_page: int) -> list[dict[str, Any]]:
+        body = self._search_body(domain, per_page)
+        last_error: httpx.HTTPStatusError | None = None
+        for path in PEOPLE_SEARCH_PATHS:
+            try:
+                return _people_from_payload(
+                    self._request("POST", path, json_body=body)
+                )
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                status = exc.response.status_code if exc.response is not None else 0
+                if status in {401, 403}:
+                    continue
+                raise
+
+        try:
+            saved = _people_from_payload(
+                self._request("POST", CONTACTS_SEARCH_PATH, json_body=body)
+            )
+            if saved:
+                logger.info(
+                    "Apollo People Search kapalı; contacts/search %d kayıt döndü.",
+                    len(saved),
+                )
+                return saved
+        except httpx.HTTPError as exc:
+            logger.warning("Apollo contacts/search başarısız: %s", exc)
+
+        if last_error is not None:
+            detail = _response_error_text(last_error.response) or str(last_error)
+            raise ApolloSearchError(detail) from last_error
+        return []
 
     def enrich_people(self, apollo_ids: list[str]) -> dict[str, dict[str, Any]]:
         """E-posta / LinkedIn için bulk match. Kredisi yoksa boş döner."""
@@ -230,7 +310,7 @@ class ApolloClient:
         try:
             payload = self._request(
                 "POST",
-                "/people/bulk_match",
+                PEOPLE_ENRICH_PATH,
                 json_body={"details": [{"id": person_id} for person_id in apollo_ids]},
             )
         except httpx.HTTPError:
@@ -244,7 +324,7 @@ class ApolloClient:
         return by_id
 
     def search_decision_makers(self, domain: str) -> list[ApolloPerson]:
-        raw_people = self.search_people(domain, settings.apollo_max_contacts)
+        raw_people = self.search_people(domain, get_settings().apollo_max_contacts)
         enrichments = self.enrich_people(
             [str(row["id"]) for row in raw_people if row.get("id")]
         )
@@ -261,13 +341,15 @@ class ApolloClient:
             seen.add(person.apollo_id)
             found.append(person)
         found.sort(key=lambda person: persona_rank(person.title), reverse=True)
-        return found[: settings.apollo_max_contacts]
+        return found[: get_settings().apollo_max_contacts]
 
 
 def _build_client() -> ApolloClient | None:
-    if not settings.apollo_api_key:
+    api_key = _apollo_api_key()
+    if not api_key:
         return None
-    return ApolloClient(settings.apollo_api_key)
+    logger.info("Apollo istemcisi hazır (key_len=%d).", len(api_key))
+    return ApolloClient(api_key)
 
 
 def persist_apollo_contacts(
