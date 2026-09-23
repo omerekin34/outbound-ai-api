@@ -11,6 +11,8 @@ from api.services.apollo import (
     company_domain,
     find_decision_makers,
     persist_apollo_contacts,
+    persona_rank,
+    select_primary_contact,
 )
 from api.services.scoring import STATUS_HIGH_PRIORITY, STATUS_QUALIFIED, STATUS_REJECT
 
@@ -184,7 +186,9 @@ def test_persist_writes_required_contact_fields(db_sessionmaker) -> None:
         written = persist_apollo_contacts(session, company, people)
         session.commit()
         assert written == 1
-        assert session.get(models.Contact, "apollo-ok").email == "ada@ornek.com"
+        stored = session.get(models.Contact, "apollo-ok")
+        assert stored.email == "ada@ornek.com"
+        assert stored.is_selected is True
 
 
 def test_contacts_endpoint_returns_real_rows(
@@ -279,3 +283,22 @@ def test_persist_analysis_skips_apollo_when_not_qualified(
         session.commit()
 
     assert fake.calls == []
+
+
+def test_persona_rank_scores() -> None:
+    assert persona_rank("Commercial Director") == 100
+    assert persona_rank("Satış Direktörü") == 90
+    assert persona_rank("CEO") == 85
+    assert persona_rank("Sales Operations Manager") == 80
+    assert persona_rank("IT Manager") == 70
+    assert persona_rank("Intern") == 0
+
+
+def test_select_primary_contact_picks_highest_rank() -> None:
+    low = models.Contact(id="a", title="IT Manager", email="a@x.com")
+    high = models.Contact(id="b", title="Commercial Director", email="b@x.com")
+    chosen = select_primary_contact([low, high])
+    assert chosen is high
+    assert high.is_selected is True
+    assert low.is_selected is False
+    assert high.persona_rank == 100

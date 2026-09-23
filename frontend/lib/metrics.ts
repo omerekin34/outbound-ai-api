@@ -2,11 +2,12 @@ import {
   Ban,
   Building2,
   CalendarClock,
-  Cpu,
   Hourglass,
   Mail,
   MailOpen,
   Sparkles,
+  Target,
+  UserRound,
   type LucideIcon,
 } from "lucide-react";
 
@@ -14,10 +15,7 @@ import type { Activity, DashboardStatsResponse } from "./api";
 
 /**
  * Tasarımdaki kartların hangi backend alanından beslendiği burada tanımlanır.
- *
- * `provisional: true` olan kartların backend'de birebir karşılığı YOK; en yakın
- * gerçek alana bağlandılar. Demo planlaması veri üretmeye başladığında
- * "AI demo" kartı planlanan demo sayısına taşınmalı.
+ * Sahte / örnek sayı yok — her kart Neon'dan gelen bir sayaçtır.
  */
 export interface MetricCard {
   key: string;
@@ -28,7 +26,6 @@ export interface MetricCard {
   delta: number | null;
   caption: string;
   provisional: boolean;
-  /** Doluysa kart tıklanabilir olur ve bu adrese gider. */
   href?: string;
 }
 
@@ -37,7 +34,7 @@ export function buildMetricCards(data: DashboardStatsResponse): MetricCard[] {
 
   return [
     {
-      key: "researched",
+      key: "analyzed",
       label: "Araştırılan şirket",
       value: stats.analyzed_companies,
       icon: Building2,
@@ -47,34 +44,35 @@ export function buildMetricCards(data: DashboardStatsResponse): MetricCard[] {
       provisional: false,
     },
     {
-      key: "positive-reply",
-      label: "Olumlu yanıt",
-      value: stats.positive_replies,
-      icon: MailOpen,
+      key: "suitable",
+      label: "Uygun",
+      value: stats.suitable_companies,
+      icon: Target,
       tone: "brand",
       delta: null,
-      caption: "Fırsatlar ekranını aç",
+      caption: "qualified / high priority",
       provisional: false,
-      href: "/opportunities",
+      href: "/sirketler",
     },
     {
-      key: "ai-demo",
-      label: "AI demo",
-      value: stats.analyzed_companies,
-      icon: Cpu,
+      key: "contacts",
+      label: "Karar verici",
+      value: stats.total_contacts,
+      icon: UserRound,
       tone: "brand",
       delta: null,
-      caption: "AI analizi tamamlanan",
-      provisional: true,
+      caption: "Apollo’dan kaydedilen kişiler",
+      provisional: false,
+      href: "/firsatlar",
     },
     {
-      key: "awaiting-decision",
+      key: "pending",
       label: "Karar bekleyen",
-      value: stats.pending_companies,
+      value: stats.pending_companies + (stats.review_companies ?? 0),
       icon: Hourglass,
       tone: "accent",
       delta: null,
-      caption: "Araştırma sırasında bekliyor",
+      caption: "Henüz puanlanmamış veya review",
       provisional: false,
     },
   ];
@@ -98,7 +96,7 @@ function suitableCompanyCount(data: DashboardStatsResponse): number {
   );
 }
 
-/** "Satış akışı" hunisi — her adım gerçek bir backend sayacına bağlı. */
+/** Satış akışı — sonraki adımlar (demo/teklif) henüz veri üretmiyorsa 0. */
 export function buildFunnelStages(data: DashboardStatsResponse): FunnelStage[] {
   const { stats } = data;
 
@@ -106,8 +104,8 @@ export function buildFunnelStages(data: DashboardStatsResponse): FunnelStage[] {
     { key: "discovery", label: "Keşif", value: stats.analyzed_companies },
     { key: "qualified", label: "Uygun", value: suitableCompanyCount(data) },
     { key: "contact", label: "İletişim", value: stats.total_contacts },
-    { key: "demo", label: "Demo", value: stats.analyzed_companies },
-    { key: "proposal", label: "Teklif", value: stats.high_intent_companies },
+    { key: "demo", label: "Demo", value: 0 },
+    { key: "proposal", label: "Teklif", value: 0 },
   ];
 }
 
@@ -116,6 +114,8 @@ const EVENT_LABELS: Record<string, string> = {
   website_research: "Web sitesi taraması",
   ai_analysis: "AI analizi",
   decision_maker_search: "Karar verici araması",
+  deep_research: "Derin araştırma",
+  outreach_prep: "E-posta taslağı",
 };
 
 const STATUS_SUFFIX: Record<Activity["status"], string> = {
@@ -130,6 +130,8 @@ const EVENT_ICONS: Record<string, LucideIcon> = {
   website_research: Mail,
   ai_analysis: CalendarClock,
   decision_maker_search: MailOpen,
+  deep_research: Target,
+  outreach_prep: MailOpen,
 };
 
 export interface ActivityView {

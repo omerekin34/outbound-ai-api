@@ -25,6 +25,14 @@ export interface DashboardStats {
   high_intent_companies: number;
   positive_replies: number;
   unread_replies: number;
+  review_companies: number;
+}
+
+export interface DailyCount {
+  date: string;
+  label: string;
+  analyzed: number;
+  positive_replies: number;
 }
 
 export interface Activity {
@@ -63,6 +71,7 @@ export interface DashboardStatsResponse {
   ai_status: AiStatus;
   status_breakdown: StatusCount[];
   top_industries: IndustryCount[];
+  daily: DailyCount[];
 }
 
 /** Kullanıcıya gösterilebilir hata mesajı taşıyan istek hatası. */
@@ -116,6 +125,85 @@ export function fetchDashboardStats(
   signal?: AbortSignal,
 ): Promise<DashboardStatsResponse> {
   return request<DashboardStatsResponse>("/api/dashboard-stats", signal);
+}
+
+export interface CompanyFact {
+  fact_type: string;
+  value: string;
+  confidence: number;
+  evidence_text: string;
+  source_url: string | null;
+}
+
+export interface CompanyContact {
+  id: string;
+  name: string | null;
+  title: string | null;
+  email: string | null;
+  linkedin_url: string | null;
+  email_status: string | null;
+  generated_email_body: string | null;
+  persona_rank: number | null;
+  is_selected: boolean;
+}
+
+export interface CompanyRow {
+  id: string;
+  name: string | null;
+  domain: string | null;
+  website: string | null;
+  industry: string | null;
+  country: string | null;
+  city: string | null;
+  status: string | null;
+  icp_score: number | null;
+  need_score: number | null;
+  overall_score: number | null;
+  qualification_status: string | null;
+  requires_deep_research: boolean;
+  erp_signal: string | null;
+  erp_confidence: number | null;
+  erp_evidence_count: number | null;
+  erp_evidence: { erp?: { value?: string; confidence?: number | null; evidence_count?: number } } | null;
+  pain_hypothesis: string | null;
+  outreach_strategy: {
+    main_pain?: string | null;
+    recommended_product?: string | null;
+    best_sales_angle?: string | null;
+    best_persona?: string | null;
+    why_now?: string | null;
+  } | null;
+  facts: CompanyFact[];
+  contacts: CompanyContact[];
+}
+
+export interface CompanyListResponse {
+  items: CompanyRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface CompanyQuery {
+  limit?: number;
+  offset?: number;
+  search?: string | null;
+  status?: string | null;
+  qualifiedOnly?: boolean;
+}
+
+export function fetchCompanies(
+  query: CompanyQuery = {},
+  signal?: AbortSignal,
+): Promise<CompanyListResponse> {
+  const path = `/api/companies${buildQuery({
+    limit: query.limit,
+    offset: query.offset,
+    search: query.search,
+    status: query.status,
+    qualified_only: query.qualifiedOnly ? true : undefined,
+  })}`;
+  return request<CompanyListResponse>(path, signal);
 }
 
 /* --- Gelen kutusu / Fırsatlar --------------------------------------------- */
@@ -233,6 +321,10 @@ export interface DecisionMaker {
   title: string | null;
   email: string | null;
   linkedin_url: string | null;
+  email_status: string | null;
+  generated_email_body: string | null;
+  persona_rank: number | null;
+  is_selected: boolean;
 }
 
 export interface ContactListResponse {
@@ -311,6 +403,31 @@ export async function startResearch(domain: string): Promise<ResearchAccepted> {
   }
 
   return (await response.json()) as ResearchAccepted;
+}
+
+export async function saveContactEmail(
+  id: string,
+  generatedEmailBody: string,
+): Promise<CompanyContact> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/contacts/${id}`, {
+      method: "PATCH",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ generated_email_body: generatedEmailBody }),
+    });
+  } catch {
+    throw new ApiError(
+      `API'ye ulaşılamadı (${API_BASE_URL}). FastAPI sunucusunun çalıştığından emin olun.`,
+    );
+  }
+  if (!response.ok) {
+    throw new ApiError(`Taslak kaydedilemedi (HTTP ${response.status}).`);
+  }
+  return (await response.json()) as CompanyContact;
 }
 
 export async function markReplyRead(

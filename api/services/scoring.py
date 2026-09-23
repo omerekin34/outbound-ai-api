@@ -1,8 +1,15 @@
-"""Step 17–20 — belirlemimci ICP/Need puanı, yeterlilik ve derin araştırma.
+"""Step 4–8 + 17–20 — belirlemimci ICP/Need puanı ve yeterlilik kapıları.
 
 LLM skor üretmez. Puan, `company_facts` satırlarında ilgili sinyalin
 **bulunup bulunmadığına** göre tam puan eklenerek hesaplanır (güven ile
 ölçeklenmez). Aynı fact seti her çalıştırmada aynı sonucu verir.
+
+ICP (100): B2B 15, fiziksel ürün 15, 50–249 çalışan 15, hedef sektör 15,
+Türkiye 10, distribütör/üretici 10, satış ekibi 10, dijital varlık 10.
+
+Need (100): ERP 15, teklif usulü 15, yüksek SKU 10, çoklu depo 10,
+bayi ağı 10, satış operasyonu 10, WhatsApp satışı 10, büyük satış ekibi 10,
+teknik doküman 5, düşük CRM olgunluğu 5.
 """
 
 from __future__ import annotations
@@ -11,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Protocol
 
-SCORE_VERSION = "3.0"
+SCORE_VERSION = "4.0"
 
 # --- yeterlilik durumları (Step 19) ----------------------------------------
 
@@ -58,11 +65,11 @@ class Signal:
 
 # Step 17 — ICP (azami 100).
 ICP_SIGNALS: tuple[Signal, ...] = (
-    Signal("b2b", 15, frozenset({"b2b", "business_model"}), frozenset({"b2b", "kurumsal", "toptan"})),
+    Signal("b2b", 15, frozenset({"b2b"}), frozenset({"b2b", "kurumsal", "toptan"})),
     Signal(
         "physical_product",
         15,
-        frozenset({"physical_product", "product_lines"}),
+        frozenset({"physical_product", "physical_products", "product_lines"}),
         frozenset(
             {
                 "fiziksel urun",
@@ -77,29 +84,28 @@ ICP_SIGNALS: tuple[Signal, ...] = (
             }
         ),
     ),
-    Signal("employee_50_249", 15, frozenset({"employee_50_249", "company_size_signal"})),
+    Signal(
+        "employee_50_249",
+        15,
+        frozenset({"employee_50_249", "employees_50_249", "company_size_signal"}),
+    ),
     Signal(
         "target_industry",
         15,
         frozenset({"target_industry", "industries_served"}),
         frozenset(
             {
-                "imalat",
-                "uretim",
                 "makina",
                 "makine",
-                "sanayi",
-                "otomotiv",
-                "metal",
-                "mobilya",
-                "gida",
-                "kimya",
-                "tekstil",
-                "insaat",
-                "ambalaj",
+                "machinery",
                 "elektronik",
-                "wholesale",
-                "manufacturing",
+                "electronics",
+                "endustriyel",
+                "endustriyel ekipman",
+                "industrial equipment",
+                "hidrolik",
+                "cnc",
+                "otomasyon",
             }
         ),
     ),
@@ -112,7 +118,14 @@ ICP_SIGNALS: tuple[Signal, ...] = (
     Signal(
         "distributor_or_manufacturer",
         10,
-        frozenset({"distributor_or_manufacturer", "manufacturer", "distributor"}),
+        frozenset(
+            {
+                "distributor_or_manufacturer",
+                "manufacturer",
+                "distributor",
+                "business_model",
+            }
+        ),
         frozenset({"uretici", "imalatci", "distributor", "manufacturer", "fabrika"}),
     ),
     Signal(
@@ -134,7 +147,7 @@ NEED_SIGNALS: tuple[Signal, ...] = (
     Signal(
         "erp_detected",
         15,
-        frozenset({"erp_detected", "erp_usage"}),
+        frozenset({"erp_detected", "erp_usage", "erp_signal"}),
         frozenset({"erp", "sap", "netsis", "logo tiger", "mikro", "nebim", "ika"}),
     ),
     Signal(
@@ -152,7 +165,7 @@ NEED_SIGNALS: tuple[Signal, ...] = (
     Signal(
         "multiple_warehouse",
         10,
-        frozenset({"multiple_warehouse"}),
+        frozenset({"multiple_warehouse", "multiple_locations"}),
         frozenset({"birden fazla depo", "multiple warehouse", "coklu depo", "depolarimiz"}),
     ),
     Signal(
@@ -182,7 +195,7 @@ NEED_SIGNALS: tuple[Signal, ...] = (
     Signal(
         "technical_docs",
         5,
-        frozenset({"technical_docs", "catalog_available"}),
+        frozenset({"technical_docs", "technical_documents", "catalog_available"}),
         frozenset({"teknik dokuman", "teknik katalog", "datasheet", "cad dosya"}),
     ),
     Signal(
@@ -194,7 +207,33 @@ NEED_SIGNALS: tuple[Signal, ...] = (
 )
 
 _HIGH_CRM = frozenset({"salesforce", "hubspot", "dynamics", "pipedrive", "zoho crm"})
-
+_MATURE_CRM_TYPES = frozenset({"crm_signal", "crm_detected"})
+_DISTRIBUTOR_TOKENS = frozenset(
+    {
+        "distributor",
+        "manufacturer",
+        "uretici",
+        "imalatci",
+        "fabrika",
+        "distribitor",
+    }
+)
+_TARGET_INDUSTRY_TOKENS = frozenset(
+    {
+        "makina",
+        "makine",
+        "machinery",
+        "elektronik",
+        "electronics",
+        "endustriyel",
+        "endustriyel ekipman",
+        "industrial equipment",
+        "hidrolik",
+        "cnc",
+        "otomasyon",
+    }
+)
+_EMPLOYEE_FACT_TYPES = frozenset({"employee_50_249", "employees_50_249"})
 _EMPLOYEE_RANGE = (50, 249)
 _NUMBER = re.compile(r"\d{1,3}(?:[.\s]\d{3})+|\d+")
 
@@ -229,6 +268,28 @@ def _employee_in_mid_market(text: str) -> bool:
     values = [_as_int(match.group(0)) for match in _NUMBER.finditer(text)]
     numbers = [value for value in values if value is not None]
     return any(_EMPLOYEE_RANGE[0] <= number <= _EMPLOYEE_RANGE[1] for number in numbers)
+
+
+def is_target_industry(text: str) -> bool:
+    folded = _fold(text)
+    return any(token in folded for token in _TARGET_INDUSTRY_TOKENS)
+
+
+def is_distributor_or_manufacturer(text: str) -> bool:
+    folded = _fold(text)
+    return any(token in folded for token in _DISTRIBUTOR_TOKENS)
+
+
+def _has_mature_crm(facts: list[tuple[str, str]]) -> bool:
+    for fact_type, text in facts:
+        type_key = _fold(fact_type).replace(" ", "_").replace("-", "_")
+        if type_key in _MATURE_CRM_TYPES or fact_type in _MATURE_CRM_TYPES:
+            if "false" in text or "yok" in text:
+                continue
+            return True
+        if any(token in text for token in _HIGH_CRM):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -278,15 +339,25 @@ def _usable_facts(
 
 def _signal_found(signal: Signal, facts: list[tuple[str, str]]) -> bool:
     """Spec: ilgili fact bulunduysa puan ver. Güven ile çarpılmaz."""
+    if signal.key == "low_crm_maturity" and _has_mature_crm(facts):
+        return False
     for fact_type, text in facts:
         type_key = _fold(fact_type).replace(" ", "_").replace("-", "_")
         if type_key in signal.fact_types or fact_type in signal.fact_types:
             if signal.key == "employee_50_249":
-                # Tip tek başına yetmez: 50–249 aralığı doğrulanır. Canonical
-                # `employee_50_249` tipi extractor'ın bu aralığı seçtiği anlamına gelir.
-                if fact_type == "employee_50_249" or type_key == "employee_50_249":
+                # Canonical extractor tipi bu aralığı zaten seçmiştir.
+                if type_key in _EMPLOYEE_FACT_TYPES or fact_type in _EMPLOYEE_FACT_TYPES:
                     return True
                 return _employee_in_mid_market(text)
+            if signal.key == "target_industry":
+                if is_target_industry(text):
+                    return True
+                continue
+            if signal.key == "distributor_or_manufacturer":
+                if type_key == "business_model" or fact_type == "business_model":
+                    if is_distributor_or_manufacturer(text):
+                        return True
+                    continue
             if signal.key == "low_crm_maturity":
                 if fact_type == "low_crm_maturity" or type_key == "low_crm_maturity":
                     return True
@@ -295,6 +366,8 @@ def _signal_found(signal: Signal, facts: list[tuple[str, str]]) -> bool:
             return True
         if signal.key == "employee_50_249" and _employee_in_mid_market(text):
             return True
+        if signal.key == "target_industry":
+            continue
         if signal.keywords and any(keyword in text for keyword in signal.keywords):
             if signal.key == "low_crm_maturity" and any(token in text for token in _HIGH_CRM):
                 continue

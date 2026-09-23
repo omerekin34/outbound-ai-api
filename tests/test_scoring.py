@@ -10,7 +10,12 @@ from sqlalchemy import select
 
 from api import models
 from api.services.analysis import persist_analysis
-from api.services.enrichment import EXTRACTION_SYSTEM_PROMPT, _normalize_facts
+from api.services.enrichment import (
+    EXTRACTION_SYSTEM_PROMPT,
+    PRODUCT_CONTEXT,
+    _normalize_facts,
+    assemble_analysis,
+)
 from api.services.scoring import (
     SCORE_VERSION,
     STATUS_HIGH_PRIORITY,
@@ -52,6 +57,10 @@ def test_extraction_prompt_does_not_ask_for_scores() -> None:
     assert "evidence_text" in EXTRACTION_SYSTEM_PROMPT
     assert "employee_50_249" in EXTRACTION_SYSTEM_PROMPT
     assert "requires_deep_research" not in prompt
+    assert "ai commercial operations platform" in prompt
+    assert '"physical_products"' in EXTRACTION_SYSTEM_PROMPT
+    assert '"pain_hypotheses"' in EXTRACTION_SYSTEM_PROMPT
+    assert "50–249" in PRODUCT_CONTEXT
 
 
 # --- fact normalizasyonu ---------------------------------------------------
@@ -88,6 +97,120 @@ def test_llm_scores_in_payload_are_not_returned() -> None:
     }
     facts = _normalize_facts(payload, set(), None)
     assert len(facts) == 1
+
+
+# --- Step 4–8: yapılandırılmış analyzer profili ----------------------------
+
+
+def _evidence(value: str, url: str = f"{BASE}/") -> dict[str, object]:
+    return {
+        "value": value,
+        "confidence": 0.9,
+        "evidence_text": f"{value}.",
+        "source_url": url,
+    }
+
+
+FULL_PROFILE = {
+    "b2b": True,
+    "physical_products": True,
+    "business_model": "distributor",
+    "high_sku": True,
+    "quote_based_sales": True,
+    "dealer_network": True,
+    "multiple_locations": True,
+    "whatsapp_sales": True,
+    "technical_documents": True,
+    "erp_signal": True,
+    "crm_signal": False,
+    "pain_hypotheses": ["quotation", "order_entry"],
+    "employees_50_249": True,
+    "target_industry": "machinery",
+    "turkey": True,
+    "sales_team": True,
+    "digital_presence": True,
+    "sales_operations": True,
+    "large_sales_team": True,
+    "evidence": {
+        "b2b": _evidence("B2B toptan"),
+        "physical_products": _evidence("Hidrolik pres"),
+        "business_model": _evidence("distributor"),
+        "high_sku": _evidence("Yüksek SKU"),
+        "quote_based_sales": _evidence("Teklif usulü"),
+        "dealer_network": _evidence("42 yetkili bayi"),
+        "multiple_locations": _evidence("Üç depo"),
+        "whatsapp_sales": _evidence("WhatsApp sipariş"),
+        "technical_documents": _evidence("Datasheet"),
+        "erp_signal": _evidence("SAP"),
+        "crm_signal": _evidence("Excel ile takip"),
+        "pain_hypotheses": _evidence("Teklifler Excel'de"),
+        "employees_50_249": _evidence("120 çalışan"),
+        "target_industry": _evidence("machinery"),
+        "turkey": _evidence("Türkiye"),
+        "sales_team": _evidence("Satış ekibi"),
+        "digital_presence": _evidence("e-ticaret"),
+        "sales_operations": _evidence("Satış operasyon"),
+        "large_sales_team": _evidence("Geniş satış kadrosu"),
+    },
+}
+
+
+def test_profile_without_evidence_does_not_create_facts() -> None:
+    assembled = assemble_analysis(
+        {
+            "b2b": True,
+            "physical_products": True,
+            "erp_signal": False,
+            "crm_signal": False,
+            "pain_hypotheses": ["quotation"],
+        },
+        {f"{BASE}/"},
+        f"{BASE}/",
+    )
+    assert assembled["facts"] == []
+    assert assembled["profile"]["b2b"] is True
+
+
+def test_structured_profile_scores_icp_and_need_to_100() -> None:
+    assembled = assemble_analysis(FULL_PROFILE, {f"{BASE}/"}, f"{BASE}/")
+    scores = calculate_scores(assembled["facts"])
+    assert scores.icp_score == 100
+    assert scores.need_score == 100
+    assert assembled["profile"]["business_model"] == "distributor"
+    assert assembled["profile"]["pain_hypotheses"] == ["quotation", "order_entry"]
+
+
+def test_crm_signal_true_blocks_low_crm_points() -> None:
+    payload = {
+        **FULL_PROFILE,
+        "crm_signal": True,
+        "evidence": {
+            **FULL_PROFILE["evidence"],
+            "crm_signal": _evidence("Salesforce"),
+        },
+        "facts": [_fact("low_crm_maturity", "Excel ile takip")],
+    }
+    assembled = assemble_analysis(payload, {f"{BASE}/"}, f"{BASE}/")
+    types = {fact["fact_type"] for fact in assembled["facts"]}
+    assert "low_crm_maturity" not in types
+    scores = calculate_scores(assembled["facts"])
+    assert scores.need_score == 95  # 100 - 5
+
+
+def test_food_industry_does_not_score_target_industry() -> None:
+    scores = calculate_scores(
+        [_fact("target_industry", "Gıda üretimi", "Gıda üretimi yapıyoruz.")]
+    )
+    assert scores.icp_score == 0
+    assert "target_industry" not in scores.matched_signals
+
+
+def test_business_model_does_not_count_as_b2b() -> None:
+    scores = calculate_scores(
+        [_fact("business_model", "distributor", "Yetkili distributor ağı.")]
+    )
+    assert scores.icp_score == 10
+    assert scores.matched_signals == ("distributor_or_manufacturer",)
 
 
 # --- Step 17 / 18: fact bulunduysa tam puan --------------------------------
@@ -392,3 +515,29 @@ def test_persist_analysis_writes_scores_status_and_flag(db_sessionmaker) -> None
             )
         ).scalar_one()
         assert fact.evidence_text.startswith("Türkiye genelinde 42")
+
+
+def test_persist_analysis_seeds_pain_from_profile(db_sessionmaker) -> None:
+    with db_sessionmaker() as session:
+        session.add(
+            models.Company(
+                id=COMPANY_ID,
+                name="Örnek Makina",
+                domain="ornekmakina.com.tr",
+                status="new",
+            )
+        )
+        session.commit()
+        company = session.get(models.Company, COMPANY_ID)
+        persist_analysis(
+            session,
+            company,
+            {
+                "facts": [_fact("b2b", "B2B")],
+                "profile": {"pain_hypotheses": ["quotation", "order_entry"]},
+            },
+            source_type="website",
+        )
+        session.commit()
+        stored = session.get(models.Company, COMPANY_ID)
+        assert stored.pain_hypothesis == "quotation, order_entry"

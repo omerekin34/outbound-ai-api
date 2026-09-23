@@ -26,7 +26,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Kampanyalar", href: "/kampanyalar", icon: Megaphone },
   { label: "Gelen Kutusu", href: "/inbox", icon: Inbox },
   { label: "Demolar", href: "/demolar", icon: Calendar },
-  { label: "Fırsatlar", href: "/opportunities", icon: Target },
+  { label: "Fırsatlar", href: "/firsatlar", icon: Target },
   { label: "Teklifler", href: "/teklifler", icon: FileText },
   { label: "AI Operasyon", href: "/ai-operasyon", icon: Cpu },
   { label: "Ayarlar", href: "/ayarlar", icon: Settings },

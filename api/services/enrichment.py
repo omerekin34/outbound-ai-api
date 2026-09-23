@@ -19,52 +19,75 @@ from api.services.website_research import ScrapedPage
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Step 14 + 16: model yalnızca kanıt çıkarır. ICP/Need/overall puanı
-# `api.services.scoring` içinde, kaydedilmiş fact'lerden hesaplanır.
-# Bu yüzden prompt'ta skor alanı YOKTUR; modelden gelen `scores` yok sayılır.
+# Step 4–8: model ürünümüzü bilerek yapılandırılmış ICP/Need profili çıkarır.
+# Puan üretmez. ICP/Need/overall `api.services.scoring` içinde, kanıtlı
+# fact'lerden hesaplanır. Modelden gelen `scores` yok sayılır.
 
-EXTRACTION_SYSTEM_PROMPT = """Sen bir B2B kanıt çıkarıcısısın. Sana bir şirketin web sitesinden taranmış sayfalar verilecek. Her sayfanın kategorisi ve URL'si belirtilmiştir.
+PRODUCT_CONTEXT = (
+    "AI Commercial Operations Platform: orta ölçekli (50–249 çalışan) "
+    "Türkiye'deki B2B fiziksel ürün şirketleri için satış, teklif, sipariş, "
+    "stok ve B2B iletişimi otomatikleştirir. Hedef sektörler: makine, "
+    "elektronik, endüstriyel ekipman."
+)
 
-TEK GÖREVİN: sayfalarda gerçekten geçen yapılandırılmış fact'leri çıkarmak.
+EXTRACTION_SYSTEM_PROMPT = """Sen bir B2B kanıt analistisin. Ürünümüz: AI Commercial Operations Platform. Orta ölçekli (50–249 çalışan) Türkiye'deki B2B fiziksel ürün şirketlerinde (makine, elektronik, endüstriyel ekipman) satış, teklif, sipariş, stok ve B2B iletişimi otomatikleştirir.
+
+Sana bir şirketin web sitesinden taranmış sayfalar verilecek. Her sayfanın kategorisi ve URL'si belirtilmiştir.
+
+TEK GÖREVİN: sayfada GERÇEKTEN geçen kanıtlardan aşağıdaki JSON profilini çıkarmak.
 
 YAPMA:
 - ICP, Need, Timing, Reachability veya overall puanı HESAPLAMA.
 - `scores` alanı DÖNDÜRME.
-- Sayfada yazmayan bilgi uydurma.
+- Sayfada yazmayan bilgi uydurma (halüsinasyon yok).
 - URL uydurma.
+- Kanıtsız alanı true yapma. Kanıt yoksa false veya "unknown" yaz.
 
-Her fact için şu dört alan ZORUNLUDUR:
-- `value`: çıkarılan olgu (kısa, somut).
-- `confidence`: 0.0 ile 1.0 arası güven. Emin değilsen düşür veya fact'i ekleme.
-- `evidence_text`: sayfadan BİREBİR alıntı. Kendi cümleni yazma; sitede geçen cümleyi kopyala.
-- `source_url`: bu alıntının alındığı sayfanın URL'si. SADECE sana verilen URL'lerden birini kullan.
+`true` olan HER alan için `evidence` içinde birebir alıntı ZORUNLUDUR:
+- `value`: kısa, somut olgu
+- `evidence_text`: sayfadan BİREBİR cümle (kendi cümleni yazma)
+- `source_url`: yalnızca verilen URL'lerden biri
+- `confidence`: 0.0–1.0
 
-Kanıtsız (`evidence_text` boş) fact ekleme. Yalnızca metinde gerçekten yer alan bilgileri raporla.
+`employees_50_249` yalnızca çalışan sayısı 50–249 arasındaysa true.
+`target_industry` yalnızca makine / elektronik / endüstriyel ekipman kanıtı varsa (machinery | electronics | industrial_equipment | unknown).
+`business_model` yalnızca kanıt varsa: distributor | manufacturer | unknown.
+`crm_signal` true ise olgun bir CRM adı geçiyor demektir. CRM yok / Excel / manuel takip varsa false.
+`pain_hypotheses` yalnızca kanıta dayanan etiketler: quotation, order_entry, inventory, dealer_coordination.
 
-Çıktıyı tam olarak bu JSON şemasıyla ver:
+Çıktıyı TAM olarak bu JSON şemasıyla ver:
 {
-  "facts": [
-    {
-      "fact_type": "dealer_network",
-      "value": "Türkiye genelinde 42 yetkili bayi",
+  "b2b": true,
+  "physical_products": true,
+  "business_model": "distributor",
+  "high_sku": true,
+  "quote_based_sales": true,
+  "dealer_network": true,
+  "multiple_locations": true,
+  "whatsapp_sales": true,
+  "technical_documents": true,
+  "erp_signal": false,
+  "crm_signal": false,
+  "pain_hypotheses": ["quotation", "order_entry"],
+  "employees_50_249": true,
+  "target_industry": "machinery",
+  "turkey": true,
+  "sales_team": true,
+  "digital_presence": true,
+  "sales_operations": false,
+  "large_sales_team": false,
+  "evidence": {
+    "b2b": {
+      "value": "B2B toptan satış",
       "confidence": 0.9,
-      "evidence_text": "Türkiye genelinde 42 yetkili bayi.",
-      "source_url": "https://ornek.com/bayiler"
+      "evidence_text": "Kurumsal müşterilere toptan satış yapıyoruz.",
+      "source_url": "https://ornek.com/hakkimizda"
     }
-  ]
+  }
 }
 
-Önerilen `fact_type` değerleri — puanlama bu tipleri arar, uygun olanları kullan:
-
-ICP sinyalleri:
-b2b, physical_product, employee_50_249, target_industry, turkey,
-distributor_or_manufacturer, sales_team, digital_presence
-
-Need sinyalleri:
-erp_detected, quote_based_sales, high_sku, multiple_warehouse, dealer_network,
-sales_operations, whatsapp_sales, large_sales_team, technical_docs, low_crm_maturity
-
-`employee_50_249` yalnızca çalışan sayısı 50–249 arasındaysa yaz.
+İsteğe bağlı `facts` dizisi eski kanıt satırları içindir; puan yine yalnızca kanıtlı alanlardan hesaplanır.
+`employee_50_249` yalnızca 50–249 çalışan kanıtı varsa yaz.
 `low_crm_maturity` yalnızca CRM yoksa / Excel / manuel takip varsa yaz."""
 
 
@@ -144,6 +167,242 @@ def _as_float(value: Any, default: float = 0.0) -> float:
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+PROFILE_BOOL_TO_FACT: dict[str, tuple[str, str]] = {
+    "b2b": ("b2b", "B2B"),
+    "physical_products": ("physical_product", "Fiziksel ürün"),
+    "high_sku": ("high_sku", "Yüksek SKU"),
+    "quote_based_sales": ("quote_based_sales", "Teklif usulü satış"),
+    "dealer_network": ("dealer_network", "Bayi ağı"),
+    "multiple_locations": ("multiple_warehouse", "Birden fazla lokasyon / depo"),
+    "whatsapp_sales": ("whatsapp_sales", "WhatsApp satışı"),
+    "technical_documents": ("technical_docs", "Teknik doküman"),
+    "erp_signal": ("erp_detected", "ERP"),
+    "employees_50_249": ("employee_50_249", "50–249 çalışan"),
+    "turkey": ("turkey", "Türkiye"),
+    "sales_team": ("sales_team", "Satış ekibi"),
+    "digital_presence": ("digital_presence", "Dijital varlık"),
+    "sales_operations": ("sales_operations", "Satış operasyonu"),
+    "large_sales_team": ("large_sales_team", "Büyük satış ekibi"),
+}
+
+_DISTRIBUTOR_MODELS = frozenset(
+    {"distributor", "manufacturer", "uretici", "üretici", "imalatci", "imalatçı"}
+)
+_TARGET_INDUSTRY_VALUES = frozenset(
+    {
+        "machinery",
+        "electronics",
+        "industrial_equipment",
+        "industrial",
+        "makina",
+        "makine",
+        "elektronik",
+        "endustriyel",
+    }
+)
+_PAIN_LABELS = frozenset(
+    {"quotation", "order_entry", "inventory", "dealer_coordination"}
+)
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        folded = value.strip().casefold()
+        if folded in {"true", "yes", "1", "evet"}:
+            return True
+        if folded in {"false", "no", "0", "hayir", "hayır"}:
+            return False
+    return None
+
+
+def _evidence_for(payload: dict[str, Any], field: str) -> dict[str, Any] | None:
+    raw = payload.get("evidence")
+    if isinstance(raw, dict):
+        item = raw.get(field)
+        if isinstance(item, dict):
+            return item
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict) and str(item.get("field") or "") == field:
+                return item
+    nested = payload.get(f"{field}_evidence")
+    if isinstance(nested, dict):
+        return nested
+    return None
+
+
+def _fact_from_evidence(
+    fact_type: str,
+    default_value: str,
+    evidence: dict[str, Any],
+    allowed_urls: set[str],
+    default_url: str | None,
+) -> dict[str, Any] | None:
+    value = str(evidence.get("value") or default_value).strip()
+    evidence_text = str(evidence.get("evidence_text") or "").strip()
+    if not value or not evidence_text:
+        return None
+    source_url = evidence.get("source_url")
+    if not isinstance(source_url, str) or source_url not in allowed_urls:
+        source_url = default_url
+    return {
+        "fact_type": fact_type,
+        "value": value,
+        "confidence": _clamp(_as_float(evidence.get("confidence"), 1.0), 0.0, 1.0),
+        "evidence_text": evidence_text,
+        "source_url": source_url,
+    }
+
+
+def normalize_profile(payload: dict[str, Any]) -> dict[str, Any]:
+    """Analyzer JSON'unu kanonik profile indirger; skor içermez."""
+    model = str(payload.get("business_model") or "unknown").strip().casefold()
+    if model not in _DISTRIBUTOR_MODELS and model != "unknown":
+        model = "unknown"
+    industry = str(payload.get("target_industry") or "unknown").strip().casefold()
+    if industry not in _TARGET_INDUSTRY_VALUES:
+        industry = "unknown"
+    pains = [
+        str(item).strip().casefold()
+        for item in (payload.get("pain_hypotheses") or [])
+        if str(item).strip().casefold() in _PAIN_LABELS
+    ]
+    return {
+        "b2b": _coerce_bool(payload.get("b2b")) is True,
+        "physical_products": _coerce_bool(payload.get("physical_products")) is True,
+        "business_model": model,
+        "high_sku": _coerce_bool(payload.get("high_sku")) is True,
+        "quote_based_sales": _coerce_bool(payload.get("quote_based_sales")) is True,
+        "dealer_network": _coerce_bool(payload.get("dealer_network")) is True,
+        "multiple_locations": _coerce_bool(payload.get("multiple_locations")) is True,
+        "whatsapp_sales": _coerce_bool(payload.get("whatsapp_sales")) is True,
+        "technical_documents": _coerce_bool(payload.get("technical_documents")) is True,
+        "erp_signal": _coerce_bool(payload.get("erp_signal")) is True,
+        "crm_signal": _coerce_bool(payload.get("crm_signal")) is True,
+        "pain_hypotheses": pains,
+        "employees_50_249": _coerce_bool(payload.get("employees_50_249")) is True,
+        "target_industry": industry,
+        "turkey": _coerce_bool(payload.get("turkey")) is True,
+        "sales_team": _coerce_bool(payload.get("sales_team")) is True,
+        "digital_presence": _coerce_bool(payload.get("digital_presence")) is True,
+        "sales_operations": _coerce_bool(payload.get("sales_operations")) is True,
+        "large_sales_team": _coerce_bool(payload.get("large_sales_team")) is True,
+    }
+
+
+def profile_to_facts(
+    payload: dict[str, Any], allowed_urls: set[str], default_url: str | None
+) -> list[dict[str, Any]]:
+    """Yapılandırılmış profili, yalnızca kanıtı olan fact satırlarına çevirir."""
+    facts: list[dict[str, Any]] = []
+    for field, (fact_type, default_value) in PROFILE_BOOL_TO_FACT.items():
+        if _coerce_bool(payload.get(field)) is not True:
+            continue
+        evidence = _evidence_for(payload, field)
+        if evidence is None:
+            continue
+        fact = _fact_from_evidence(
+            fact_type, default_value, evidence, allowed_urls, default_url
+        )
+        if fact:
+            facts.append(fact)
+
+    model = str(payload.get("business_model") or "").strip().casefold()
+    if model in _DISTRIBUTOR_MODELS:
+        evidence = _evidence_for(payload, "business_model")
+        if evidence is not None:
+            fact = _fact_from_evidence(
+                "business_model",
+                model,
+                evidence,
+                allowed_urls,
+                default_url,
+            )
+            if fact:
+                facts.append(fact)
+
+    industry = str(payload.get("target_industry") or "").strip()
+    if industry.casefold() in _TARGET_INDUSTRY_VALUES:
+        evidence = _evidence_for(payload, "target_industry")
+        if evidence is not None:
+            fact = _fact_from_evidence(
+                "target_industry",
+                industry,
+                evidence,
+                allowed_urls,
+                default_url,
+            )
+            if fact:
+                facts.append(fact)
+
+    crm = _coerce_bool(payload.get("crm_signal"))
+    if crm is False:
+        evidence = _evidence_for(payload, "crm_signal")
+        if evidence is not None:
+            fact = _fact_from_evidence(
+                "low_crm_maturity",
+                "Düşük CRM olgunluğu",
+                evidence,
+                allowed_urls,
+                default_url,
+            )
+            if fact:
+                facts.append(fact)
+    elif crm is True:
+        evidence = _evidence_for(payload, "crm_signal")
+        if evidence is not None:
+            fact = _fact_from_evidence(
+                "crm_signal",
+                "CRM tespit edildi",
+                evidence,
+                allowed_urls,
+                default_url,
+            )
+            if fact:
+                facts.append(fact)
+
+    pains = [
+        str(item).strip()
+        for item in (payload.get("pain_hypotheses") or [])
+        if str(item).strip().casefold() in _PAIN_LABELS
+    ]
+    if pains:
+        evidence = _evidence_for(payload, "pain_hypotheses")
+        if evidence is not None:
+            fact = _fact_from_evidence(
+                "pain_hypotheses",
+                ", ".join(pains),
+                evidence,
+                allowed_urls,
+                default_url,
+            )
+            if fact:
+                facts.append(fact)
+
+    return facts
+
+
+def _merge_facts(
+    profile_facts: list[dict[str, Any]],
+    legacy_facts: list[dict[str, Any]],
+    *,
+    crm_signal: bool | None,
+) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for fact in profile_facts + legacy_facts:
+        fact_type = str(fact.get("fact_type") or "")
+        if not fact_type:
+            continue
+        merged.setdefault(fact_type, fact)
+    if crm_signal is True:
+        merged.pop("low_crm_maturity", None)
+    return list(merged.values())
 
 
 def _normalize_facts(
@@ -243,9 +502,8 @@ def analyze_scraped_pages(
         total_chars=settings.research_total_chars,
     )
     payload = _request_analysis(company_name, f"Taranan sayfalar:\n\n{prompt}")
-
     allowed = {page.url for page in pages}
-    return {"facts": _normalize_facts(payload, allowed, pages[0].url)}
+    return assemble_analysis(payload, allowed, pages[0].url)
 
 
 def analyze_company_content(
@@ -256,4 +514,18 @@ def analyze_company_content(
     payload = _request_analysis(company_name, f"Web Sitesi İçeriği:\n{content}")
 
     allowed = {source_url} if source_url else set()
-    return {"facts": _normalize_facts(payload, allowed, source_url)}
+    return assemble_analysis(payload, allowed, source_url)
+
+
+def assemble_analysis(
+    payload: dict[str, Any],
+    allowed_urls: set[str],
+    default_url: str | None,
+) -> dict[str, Any]:
+    """Profil + kanıtlı fact'leri birleştirir; LLM skorunu yok sayar."""
+    facts = _merge_facts(
+        profile_to_facts(payload, allowed_urls, default_url),
+        _normalize_facts(payload, allowed_urls, default_url),
+        crm_signal=_coerce_bool(payload.get("crm_signal")),
+    )
+    return {"facts": facts, "profile": normalize_profile(payload)}

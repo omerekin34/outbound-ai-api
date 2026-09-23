@@ -37,6 +37,8 @@ def test_suitable_count_excludes_low_priority_and_reject(
     assert stats["analyzed_companies"] == 4
     assert stats["suitable_companies"] == 2
     assert stats["pending_companies"] == 1
+    assert stats["review_companies"] == 0
+    assert len(client.get("/api/dashboard-stats").json()["daily"]) == 7
     assert breakdown.get(STATUS_LOW_PRIORITY) == 1
     assert breakdown.get(STATUS_QUALIFIED) == 1
     assert breakdown.get(STATUS_HIGH_PRIORITY) == 1

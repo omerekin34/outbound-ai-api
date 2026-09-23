@@ -28,30 +28,40 @@ settings = get_settings()
 APOLLO_BASE = "https://api.apollo.io/api/v1"
 CONTACT_ID_PREFIX = "apollo-"
 
-# Spec: C-level, satış, satın alma, IT.
+# Persona puanı (yüksek kazanır). Apollo araması bu unvanlarla sınırlıdır.
+PERSONA_RANKS: tuple[tuple[int, tuple[str, ...]], ...] = (
+    (100, ("commercial director", "ticari direktör", "ticari direktor", "ticaret direktörü")),
+    (90, ("sales director", "satış direktörü", "satis direktoru", "vp sales", "head of sales")),
+    (
+        85,
+        (
+            "general manager",
+            "genel müdür",
+            "genel mudur",
+            "ceo",
+            "chief executive",
+            "owner",
+            "kurucu",
+            "founder",
+        ),
+    ),
+    (80, ("sales operations manager", "satış operasyon", "sales operations", "satis operasyon")),
+    (70, ("it manager", "it müdürü", "it muduru", "bilgi işlem müdürü", "head of it", "it director")),
+)
+
 DECISION_MAKER_TITLES = (
-    "CEO",
-    "Chief Executive Officer",
-    "CTO",
-    "Chief Technology Officer",
-    "CFO",
-    "COO",
-    "CIO",
-    "Owner",
-    "Founder",
-    "General Manager",
-    "Managing Director",
+    "Commercial Director",
+    "Ticari Direktör",
     "Sales Director",
-    "VP Sales",
-    "Head of Sales",
-    "Purchasing Manager",
-    "Procurement Manager",
-    "IT Director",
-    "Head of IT",
-    "Genel Müdür",
     "Satış Direktörü",
-    "Satın Alma Müdürü",
-    "Bilgi Teknolojileri Direktörü",
+    "General Manager",
+    "Genel Müdür",
+    "CEO",
+    "Owner",
+    "Sales Operations Manager",
+    "Satış Operasyon Müdürü",
+    "IT Manager",
+    "IT Müdürü",
 )
 
 _TITLE_LIMIT = 100
@@ -87,6 +97,42 @@ def company_domain(company: models.Company) -> str | None:
     if not raw or "." not in raw:
         return None
     return raw
+
+
+def _fold(value: str) -> str:
+    return (
+        value.casefold()
+        .replace("ı", "i")
+        .replace("ğ", "g")
+        .replace("ü", "u")
+        .replace("ş", "s")
+        .replace("ö", "o")
+        .replace("ç", "c")
+    )
+
+
+def persona_rank(title: str | None) -> int:
+    """Unvana göre persona puanı; eşleşme yoksa 0."""
+    if not title:
+        return 0
+    folded = _fold(title)
+    best = 0
+    for score, aliases in PERSONA_RANKS:
+        if any(alias in folded or _fold(alias) in folded for alias in aliases):
+            best = max(best, score)
+    return best
+
+
+def select_primary_contact(contacts: list[models.Contact]) -> models.Contact | None:
+    """En yüksek persona puanlı kişiyi işaretler; yoksa None."""
+    if not contacts:
+        return None
+    for contact in contacts:
+        contact.persona_rank = persona_rank(contact.title)
+        contact.is_selected = False
+    chosen = max(contacts, key=lambda row: (row.persona_rank or 0, bool(row.email)))
+    chosen.is_selected = True
+    return chosen
 
 
 def _clean(value: object, limit: int | None = None) -> str | None:
@@ -214,9 +260,8 @@ class ApolloClient:
                 continue
             seen.add(person.apollo_id)
             found.append(person)
-            if len(found) >= settings.apollo_max_contacts:
-                break
-        return found
+        found.sort(key=lambda person: persona_rank(person.title), reverse=True)
+        return found[: settings.apollo_max_contacts]
 
 
 def _build_client() -> ApolloClient | None:
@@ -261,6 +306,12 @@ def persist_apollo_contacts(
                 person.contact_id,
                 person.email,
             )
+    stored = list(
+        db.execute(
+            select(models.Contact).where(models.Contact.company_id == company.id)
+        ).scalars()
+    )
+    select_primary_contact(stored)
     return written
 
 

@@ -10,8 +10,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from api.database import get_db
-from api.models import Interaction
-from api.schemas import ContactListOut, InboxResponse, OpportunitiesResponse, ReplyOut
+from api.models import Contact, Interaction
+from api.schemas import (
+    CompanyContactBrief,
+    ContactEmailUpdate,
+    ContactListOut,
+    InboxResponse,
+    OpportunitiesResponse,
+    ReplyOut,
+)
 from api.services.inbox import (
     fetch_contacts,
     fetch_inbox,
@@ -54,6 +61,43 @@ def list_contacts(
         offset=offset,
         search=search,
         qualified_only=qualified_only,
+    )
+
+
+@router.patch(
+    "/contacts/{contact_id}",
+    response_model=CompanyContactBrief,
+    summary="Soğuk e-posta taslağını kaydet",
+)
+def update_contact_email(
+    contact_id: str,
+    payload: ContactEmailUpdate,
+    db: Session = Depends(get_db),
+) -> CompanyContactBrief:
+    contact = db.get(Contact, contact_id)
+    if contact is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Kişi bulunamadı: {contact_id}",
+        )
+    contact.generated_email_body = payload.generated_email_body.strip() or None
+    db.commit()
+    db.refresh(contact)
+    parts = [
+        part
+        for part in (contact.first_name, contact.last_name)
+        if part and part.strip()
+    ]
+    return CompanyContactBrief(
+        id=contact.id,
+        name=" ".join(parts) or None,
+        title=contact.title,
+        email=contact.email,
+        linkedin_url=contact.linkedin_url,
+        email_status=contact.email_status,
+        generated_email_body=contact.generated_email_body,
+        persona_rank=contact.persona_rank,
+        is_selected=bool(contact.is_selected),
     )
 
 

@@ -59,6 +59,7 @@ INDEXES = (
     ("ix_interactions_received_at", "interactions", "(received_at DESC)"),
     ("ix_scores_qualification_status", "scores", "(qualification_status)"),
     ("ix_scores_requires_deep_research", "scores", "(requires_deep_research)"),
+    ("ix_contacts_email_status", "contacts", "(email_status)"),
 )
 
 
@@ -213,6 +214,69 @@ def add_foreign_keys(connection, migrator: Migrator) -> None:
         )
 
 
+def add_enterprise_research_columns(connection, migrator: Migrator) -> None:
+    """ERP kanıt JSON'u, persona sırası ve iki adımlı mesaj stratejisi."""
+    extras = (
+        ("companies", "erp_confidence", "DOUBLE PRECISION"),
+        ("companies", "erp_evidence_count", "INTEGER"),
+        ("companies", "erp_evidence", "JSONB"),
+        ("companies", "outreach_strategy", "JSONB"),
+        ("contacts", "persona_rank", "INTEGER"),
+        ("contacts", "is_selected", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    )
+    for table, column, sql_type in extras:
+        if column_type(connection, table, column) is None:
+            migrator.execute(
+                connection,
+                f'ALTER TABLE "{table}" ADD COLUMN {column} {sql_type}',
+                f"{table}.{column} kolonu eklendi.",
+            )
+        else:
+            migrator.log_skipped(f"{table}.{column} zaten var.")
+
+
+def add_contact_outreach_columns(connection, migrator: Migrator) -> None:
+    """Step 15–17: e-posta doğrulama durumu ve soğuk e-posta taslağı."""
+    if column_type(connection, "contacts", "email_status") is None:
+        migrator.execute(
+            connection,
+            "ALTER TABLE contacts ADD COLUMN email_status VARCHAR(32)",
+            "contacts.email_status kolonu eklendi.",
+        )
+    else:
+        migrator.log_skipped("contacts.email_status zaten var.")
+
+    if column_type(connection, "contacts", "generated_email_body") is None:
+        migrator.execute(
+            connection,
+            "ALTER TABLE contacts ADD COLUMN generated_email_body TEXT",
+            "contacts.generated_email_body kolonu eklendi.",
+        )
+    else:
+        migrator.log_skipped("contacts.generated_email_body zaten var.")
+
+
+def add_company_deep_research_columns(connection, migrator: Migrator) -> None:
+    """Step 10–12: ERP sinyali ve ağrı hipotezi."""
+    if column_type(connection, "companies", "erp_signal") is None:
+        migrator.execute(
+            connection,
+            "ALTER TABLE companies ADD COLUMN erp_signal TEXT",
+            "companies.erp_signal kolonu eklendi.",
+        )
+    else:
+        migrator.log_skipped("companies.erp_signal zaten var.")
+
+    if column_type(connection, "companies", "pain_hypothesis") is None:
+        migrator.execute(
+            connection,
+            "ALTER TABLE companies ADD COLUMN pain_hypothesis TEXT",
+            "companies.pain_hypothesis kolonu eklendi.",
+        )
+    else:
+        migrator.log_skipped("companies.pain_hypothesis zaten var.")
+
+
 def add_score_qualification_columns(connection, migrator: Migrator) -> None:
     """Step 19–20: yeterlilik durumu ve derin araştırma bayrağı."""
     if column_type(connection, "scores", "qualification_status") is None:
@@ -298,6 +362,9 @@ def main() -> int:
         align_company_id_columns(connection, migrator)
         add_foreign_keys(connection, migrator)
         add_score_qualification_columns(connection, migrator)
+        add_company_deep_research_columns(connection, migrator)
+        add_contact_outreach_columns(connection, migrator)
+        add_enterprise_research_columns(connection, migrator)
         create_indexes(connection, migrator)
         if args.fix_status:
             fix_status_values(connection, migrator)

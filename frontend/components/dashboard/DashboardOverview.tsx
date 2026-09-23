@@ -5,6 +5,7 @@ import { TriangleAlert } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { API_BASE_URL } from "@/lib/api";
 import { buildFunnelStages, buildMetricCards } from "@/lib/metrics";
+import { useCompanies } from "@/lib/useCompanies";
 import { useDashboardStats } from "@/lib/useDashboardStats";
 
 import { ActivityFeed } from "./ActivityFeed";
@@ -19,6 +20,7 @@ import { SalesFlow } from "./SalesFlow";
 export function DashboardOverview() {
   const { data, error, isLoading, isRefreshing, lastUpdatedAt, refresh } =
     useDashboardStats();
+  const review = useCompanies({ limit: 10, status: "review" });
 
   return (
     <div className="space-y-5">
@@ -49,10 +51,10 @@ export function DashboardOverview() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.85fr)_minmax(0,1fr)]">
             <div className="space-y-4">
               <SalesFlow stages={buildFunnelStages(data)} />
-              <ResponseChart />
+              <ResponseChart daily={data.daily ?? []} />
             </div>
 
-            <DecisionList />
+            <DecisionList companies={review.data?.items ?? []} />
 
             <ActivityFeed aiStatus={data.ai_status} />
 
@@ -60,10 +62,6 @@ export function DashboardOverview() {
           </div>
         </div>
       ) : null}
-
-      <p className="pt-1 text-right text-[11px] text-ink-muted">
-        Tasarım referansı 01 / 10
-      </p>
     </div>
   );
 }

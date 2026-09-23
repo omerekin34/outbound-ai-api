@@ -21,6 +21,7 @@ from api.config import get_settings
 from api.database import session_scope
 from api.services.activity import EVENT_WEBSITE_RESEARCH, track_activity
 from api.services.analysis import persist_analysis
+from api.services.deep_research import pages_to_source_text
 from api.services.enrichment import analyze_scraped_pages, firecrawl_client
 from api.services.website_research import MAX_PAGES, research_website
 
@@ -151,7 +152,11 @@ def execute_research_pipeline(
 
         extraction = analyze_scraped_pages(company.name or "", result.scraped_pages)
         facts_saved, scores = persist_analysis(
-            db, company, extraction, source_type="website"
+            db,
+            company,
+            extraction,
+            source_type="website",
+            source_text=pages_to_source_text(result.scraped_pages),
         )
     return result, extraction, facts_saved, scores
 

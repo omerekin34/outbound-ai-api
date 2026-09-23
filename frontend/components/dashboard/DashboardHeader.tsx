@@ -1,7 +1,5 @@
 import { ArrowRight, Calendar, ChevronDown, RefreshCw } from "lucide-react";
 
-import { formatDateTime } from "@/lib/format";
-
 interface DashboardHeaderProps {
   lastUpdatedAt: Date | null;
   isRefreshing: boolean;
@@ -9,7 +7,6 @@ interface DashboardHeaderProps {
 }
 
 export function DashboardHeader({
-  lastUpdatedAt,
   isRefreshing,
   onRefresh,
 }: DashboardHeaderProps) {
@@ -29,11 +26,7 @@ export function DashboardHeader({
           type="button"
           onClick={onRefresh}
           disabled={isRefreshing}
-          title={
-            lastUpdatedAt
-              ? `Son güncelleme: ${formatDateTime(lastUpdatedAt)}`
-              : "Verileri yenile"
-          }
+          title="Verileri yenile"
           className="flex size-8 items-center justify-center rounded-lg border border-line bg-surface text-ink-soft transition-colors hover:text-ink disabled:opacity-50"
         >
           <RefreshCw

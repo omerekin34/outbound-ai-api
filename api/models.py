@@ -112,6 +112,14 @@ class Company(Base):
     raw_address = Column(Text)
     status = Column(String, default="new", index=True)
 
+    # Step 10–12: nitelikli şirketlerde derin araştırma çıktısı.
+    erp_signal = Column(Text)
+    erp_confidence = Column(Float)
+    erp_evidence_count = Column(Integer)
+    erp_evidence = Column(JsonColumn)
+    pain_hypothesis = Column(Text)
+    outreach_strategy = Column(JsonColumn)
+
     logo_url = Column(Text)
     linkedin_url = Column(Text)
     founded_year = Column(Integer)
@@ -157,6 +165,11 @@ class Contact(Base):
     title = Column(String(100))
     department = Column(Text)
     email = Column(String(ID_LENGTH), unique=True)
+    # Step 15–17: MX doğrulama, persona sırası ve soğuk e-posta taslağı.
+    email_status = Column(String(32), index=True)
+    generated_email_body = Column(Text)
+    persona_rank = Column(Integer, default=0)
+    is_selected = Column(Boolean, nullable=False, default=False)
     corporate_phone = Column(Text)
     linkedin_url = Column(Text)
     created_at = Column(DateTime, server_default=func.current_timestamp())

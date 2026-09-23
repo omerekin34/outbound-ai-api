@@ -1,5 +1,6 @@
 import { Link, Mail, UserRound } from "lucide-react";
 
+import { EmailStatusBadge } from "@/components/companies/EmailStatusBadge";
 import { Card } from "@/components/ui/Card";
 import type { DecisionMaker } from "@/lib/api";
 
@@ -60,6 +61,7 @@ export function DecisionMakersTable({ items }: { items: DecisionMaker[] }) {
                 </td>
                 <td className="px-3 py-3">
                   <div className="flex flex-col gap-1">
+                    <EmailStatusBadge status={person.email_status} />
                     {person.email ? (
                       <a
                         href={`mailto:${person.email}`}

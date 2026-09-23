@@ -138,6 +138,12 @@ class CompanyOut(UtcModel):
     country: str | None
     city: str | None
     status: str | None
+    erp_signal: str | None = None
+    erp_confidence: float | None = None
+    erp_evidence_count: int | None = None
+    erp_evidence: dict[str, Any] | None = None
+    pain_hypothesis: str | None = None
+    outreach_strategy: dict[str, Any] | None = None
 
     @field_validator("status", mode="after")
     @classmethod
@@ -154,8 +160,36 @@ class CompanyOut(UtcModel):
     updated_at: datetime | None
 
 
+class CompanyContactBrief(BaseModel):
+    id: str
+    name: str | None
+    title: str | None
+    email: str | None
+    linkedin_url: str | None
+    email_status: str | None = None
+    generated_email_body: str | None = None
+    persona_rank: int | None = None
+    is_selected: bool = False
+
+
+class ContactEmailUpdate(BaseModel):
+    generated_email_body: str = Field(max_length=8000)
+
+
+class CompanyRowOut(CompanyOut):
+    """Şirketler / Fırsatlar tablosu: puan, kanıt ve Apollo kişileri."""
+
+    icp_score: float | None = None
+    need_score: float | None = None
+    overall_score: float | None = None
+    qualification_status: str | None = None
+    requires_deep_research: bool = False
+    facts: list["FactOut"] = []
+    contacts: list[CompanyContactBrief] = []
+
+
 class CompanyListOut(BaseModel):
-    items: list[CompanyOut]
+    items: list[CompanyRowOut]
     total: int
     limit: int
     offset: int
@@ -283,6 +317,10 @@ class ContactOut(BaseModel):
     title: str | None
     email: str | None
     linkedin_url: str | None
+    email_status: str | None = None
+    generated_email_body: str | None = None
+    persona_rank: int | None = None
+    is_selected: bool = False
 
 
 class ContactListOut(BaseModel):
@@ -333,6 +371,15 @@ class DashboardStats(BaseModel):
     positive_replies: int
     #: Henüz okunmamış gelen yanıt sayısı (gelen kutusu rozeti).
     unread_replies: int
+    #: Step 19 `review` — insan kararı bekleyen şirketler.
+    review_companies: int
+
+
+class DailyCount(BaseModel):
+    date: str
+    label: str
+    analyzed: int
+    positive_replies: int
 
 
 class AiStatus(BaseModel):
@@ -360,6 +407,10 @@ class DashboardStatsResponse(BaseModel):
     ai_status: AiStatus
     status_breakdown: list[StatusCount]
     top_industries: list[IndustryCount]
+    daily: list[DailyCount] = []
+
+
+CompanyRowOut.model_rebuild()
 
 
 class HealthResponse(BaseModel):

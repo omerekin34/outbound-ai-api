@@ -1,10 +1,10 @@
-"""Analiz sonuçlarının kalıcılaştırılması (fact/kanıt + backend puanlama).
+"""Analiz sonuçlarının kalıcılaştırılması (profil/fact + backend puanlama).
 
-Akış Step 14–16'ya uyar:
-  1. LLM yalnızca fact üretir.
-  2. Fact'ler `company_facts` tablosuna yazılır.
+Akış Step 4–8 + 14–16'ya uyar:
+  1. LLM yapılandırılmış ICP/Need profili ve kanıt üretir (puan üretmez).
+  2. Kanıtlı fact'ler `company_facts` tablosuna yazılır.
   3. Puanlar Python'da, tablodaki fact'lerden hesaplanır (`scoring.py`).
-  4. Hesaplanan puan `scores` tablosuna yazılır.
+  4. Yeterlilik kapısı derin araştırmayı açar veya durdurur.
 
 LLM'nin döndürdüğü herhangi bir `scores` alanı burada okunmaz.
 """
@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 
 from api import models
 from api.services.apollo import find_decision_makers
+from api.services.deep_research import apply_deep_research
+from api.services.outreach import prepare_outreach
 from api.services.scoring import SCORE_VERSION, Scores, calculate_scores
 
 
@@ -50,6 +52,21 @@ def persist_scores(db: Session, company_id: str, scores: dict[str, Any] | Scores
         return
     for key, value in values.items():
         setattr(record, key, value)
+
+
+PAIN_HYPOTHESIS_MAX = 800
+
+
+def _persist_analyzer_profile(
+    company: models.Company, profile: dict[str, Any] | None
+) -> None:
+    """Analyzer `pain_hypotheses` listesini, boşsa şirket kaydına yazar."""
+    if not profile or company.pain_hypothesis:
+        return
+    pains = [str(item).strip() for item in (profile.get("pain_hypotheses") or []) if str(item).strip()]
+    if not pains:
+        return
+    company.pain_hypothesis = ", ".join(pains)[:PAIN_HYPOTHESIS_MAX]
 
 
 def persist_facts(
@@ -131,6 +148,7 @@ def persist_analysis(
     analysis: dict[str, Any],
     *,
     source_type: str,
+    source_text: str | None = None,
 ) -> tuple[int, Scores]:
     """Fact'leri kaydeder, ardından backend puanını hesaplar.
 
@@ -140,12 +158,15 @@ def persist_analysis(
     written = persist_facts(
         db, company, analysis.get("facts") or [], source_type=source_type
     )
+    _persist_analyzer_profile(company, analysis.get("profile"))
     # autoflush kapalı; SELECT'in henüz commit edilmemiş fact'leri görmesi
     # için flush şart. Böylece puan tablodaki (bu koşu + önceki tipler)
     # gerçeği yansıtır, LLM skorunu değil.
     db.flush()
     scores = score_company(db, company.id)
-    # Step 13 + 20: yalnızca nitelikli / yüksek öncelikli şirketlerde Apollo.
+    # Step 10–17 + 20: derin araştırma → Apollo → doğrulama + taslak.
     if scores.requires_deep_research:
+        apply_deep_research(db, company, source_text)
         find_decision_makers(db, company)
+        prepare_outreach(db, company)
     return written, scores

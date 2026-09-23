@@ -15,9 +15,11 @@ from sqlalchemy.orm import Session
 
 from api.config import get_settings
 from api.models import (
+    POSITIVE_CLASSIFICATIONS,
     ActivityLog,
     Company,
     Contact,
+    Interaction,
     Score,
     normalized_status,
     trim_chars,
@@ -25,13 +27,18 @@ from api.models import (
 from api.schemas import (
     ActivityOut,
     AiStatus,
+    DailyCount,
     DashboardStats,
     DashboardStatsResponse,
     IndustryCount,
     StatusCount,
 )
 from api.services.inbox import count_positive_replies
-from api.services.scoring import DEEP_RESEARCH_STATUSES, QUALIFICATION_STATUSES
+from api.services.scoring import (
+    DEEP_RESEARCH_STATUSES,
+    QUALIFICATION_STATUSES,
+    STATUS_REVIEW,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -81,6 +88,9 @@ def _company_counters(db: Session, now: datetime) -> DashboardStats:
             .filter(status.in_(tuple(DEEP_RESEARCH_STATUSES)))
             .label("suitable"),
             func.count(Company.id)
+            .filter(status == STATUS_REVIEW)
+            .label("review"),
+            func.count(Company.id)
             .filter(Company.created_at >= today_start)
             .label("today"),
             func.count(Company.id)
@@ -106,6 +116,7 @@ def _company_counters(db: Session, now: datetime) -> DashboardStats:
         pending_companies=row.pending or 0,
         analyzed_companies=row.analyzed or 0,
         suitable_companies=row.suitable or 0,
+        review_companies=row.review or 0,
         companies_added_today=row.today or 0,
         companies_added_last_7_days=row.week or 0,
         total_contacts=contacts_total,
@@ -125,6 +136,71 @@ def _status_breakdown(db: Session) -> list[StatusCount]:
     ).all()
     return [
         StatusCount(status=row.status or "bilinmiyor", count=row.count) for row in rows
+    ]
+
+
+_MONTHS_TR = (
+    "",
+    "Oca",
+    "Şub",
+    "Mar",
+    "Nis",
+    "May",
+    "Haz",
+    "Tem",
+    "Ağu",
+    "Eyl",
+    "Eki",
+    "Kas",
+    "Ara",
+)
+
+
+def _as_day_key(value: object) -> str:
+    text = str(value)
+    return text[:10]
+
+
+def _daily_counts(db: Session, now: datetime) -> list[DailyCount]:
+    """Son 7 gün: gerçek skor ve olumlu yanıt adedi. Veri yoksa 0."""
+    today = now.date()
+    days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
+    window_start = datetime.combine(days[0], datetime.min.time())
+
+    analyzed_map: dict[str, int] = {}
+    try:
+        rows = db.execute(
+            select(func.date(Score.calculated_at), func.count(Score.id)).where(
+                Score.calculated_at >= window_start
+            ).group_by(func.date(Score.calculated_at))
+        ).all()
+        analyzed_map = {_as_day_key(day): int(count or 0) for day, count in rows}
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.warning("Günlük skor serisi okunamadı: %s", exc)
+
+    reply_map: dict[str, int] = {}
+    try:
+        rows = db.execute(
+            select(func.date(Interaction.received_at), func.count(Interaction.id)).where(
+                Interaction.direction == Interaction.DIRECTION_INBOUND,
+                Interaction.ai_classification.in_(POSITIVE_CLASSIFICATIONS),
+                Interaction.received_at >= window_start,
+            ).group_by(func.date(Interaction.received_at))
+        ).all()
+        reply_map = {_as_day_key(day): int(count or 0) for day, count in rows}
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.warning("Günlük yanıt serisi okunamadı: %s", exc)
+
+    return [
+        DailyCount(
+            date=day.isoformat(),
+            label=f"{day.day} {_MONTHS_TR[day.month]}",
+            analyzed=analyzed_map.get(day.isoformat(), 0),
+            positive_replies=reply_map.get(day.isoformat(), 0),
+        )
+        for day in days
     ]
 
 
@@ -216,4 +292,5 @@ def build_dashboard_stats(db: Session, activity_limit: int) -> DashboardStatsRes
         ai_status=build_ai_status(activities, now),
         status_breakdown=_status_breakdown(db),
         top_industries=_top_industries(db),
+        daily=_daily_counts(db, now),
     )

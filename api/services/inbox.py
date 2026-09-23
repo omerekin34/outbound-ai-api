@@ -319,6 +319,10 @@ def fetch_contacts(
             Contact.title,
             Contact.email,
             Contact.linkedin_url,
+            Contact.email_status,
+            Contact.generated_email_body,
+            Contact.persona_rank,
+            Contact.is_selected,
             Company.name.label("company_name"),
             Company.domain.label("company_domain"),
             Company.status.label("company_status"),
@@ -344,7 +348,12 @@ def fetch_contacts(
     ).scalar() or 0
 
     rows = db.execute(
-        query.order_by(Company.name.asc().nullslast(), Contact.last_name.asc().nullslast())
+        query.order_by(
+            Contact.is_selected.desc(),
+            Contact.persona_rank.desc().nullslast(),
+            Company.name.asc().nullslast(),
+            Contact.last_name.asc().nullslast(),
+        )
         .limit(limit)
         .offset(offset)
     ).all()
@@ -365,6 +374,10 @@ def fetch_contacts(
                 title=row.title,
                 email=row.email,
                 linkedin_url=row.linkedin_url,
+                email_status=row.email_status,
+                generated_email_body=row.generated_email_body,
+                persona_rank=row.persona_rank,
+                is_selected=bool(row.is_selected),
             )
         )
     return ContactListOut(items=items, total=total, limit=limit, offset=offset)

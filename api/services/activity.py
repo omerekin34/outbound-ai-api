@@ -27,6 +27,8 @@ EVENT_COMPANY_DISCOVERY = "company_discovery"
 EVENT_WEBSITE_RESEARCH = "website_research"
 EVENT_AI_ANALYSIS = "ai_analysis"
 EVENT_DECISION_MAKER = "decision_maker_search"
+EVENT_DEEP_RESEARCH = "deep_research"
+EVENT_OUTREACH_PREP = "outreach_prep"
 
 # Panelde tek satırda gösterilebilmesi için mesaj uzunluğu sınırlanır;
 # dış servisler bazen sayfalarca hata metni döndürüyor.

@@ -6,7 +6,7 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from api.schemas import (
     ResearchedPageOut,
     WebsiteResearchResponse,
 )
+from api.services.company_list import fetch_companies
 from api.services.activity import (
     EVENT_AI_ANALYSIS,
     EVENT_COMPANY_DISCOVERY,
@@ -79,38 +80,19 @@ def list_companies(
     offset: int = Query(default=0, ge=0),
     status_filter: str | None = Query(default=None, alias="status"),
     search: str | None = Query(default=None, min_length=1, max_length=200),
+    qualified_only: bool = Query(
+        default=False,
+        description="Yalnızca qualified / high priority.",
+    ),
 ) -> CompanyListOut:
-    """Dashboard tablosunu besleyen sayfalanmış şirket listesi."""
-    filters = []
-    if status_filter:
-        filters.append(
-            models.normalized_status(models.Company.status) == status_filter.strip().lower()
-        )
-    if search:
-        pattern = f"%{search.strip().lower()}%"
-        filters.append(
-            func.lower(func.coalesce(models.Company.name, ""))
-            .like(pattern)
-            | func.lower(func.coalesce(models.Company.domain, "")).like(pattern)
-        )
-
-    total = db.execute(
-        select(func.count(models.Company.id)).where(*filters)
-    ).scalar() or 0
-
-    companies = db.execute(
-        select(models.Company)
-        .where(*filters)
-        .order_by(models.Company.created_at.desc().nullslast(), models.Company.id)
-        .limit(limit)
-        .offset(offset)
-    ).scalars().all()
-
-    return CompanyListOut(
-        items=[CompanyOut.model_validate(item) for item in companies],
-        total=total,
+    """Puan, kanıt ve Apollo kişileriyle sayfalanmış şirket listesi."""
+    return fetch_companies(
+        db,
         limit=limit,
         offset=offset,
+        status_filter=status_filter,
+        search=search,
+        qualified_only=qualified_only,
     )
 
 
@@ -290,7 +272,11 @@ def analyze_company(
             payload.source_url or company.website,
         )
         fact_count, scores = persist_analysis(
-            db, company, extraction, source_type="website"
+            db,
+            company,
+            extraction,
+            source_type="website",
+            source_text=payload.website_content,
         )
         db.commit()
 

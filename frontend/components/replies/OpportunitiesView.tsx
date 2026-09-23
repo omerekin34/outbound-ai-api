@@ -8,7 +8,9 @@ import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SearchInput } from "@/components/replies/SearchInput";
 import { StatTiles } from "@/components/replies/StatTiles";
+import { CompanyPipelineTable } from "@/components/companies/CompanyPipelineTable";
 import { DecisionMakersTable } from "@/components/replies/DecisionMakersTable";
+import { useCompanies } from "@/lib/useCompanies";
 import {
   ConnectionError,
   EmptyState,
@@ -34,16 +36,22 @@ export function OpportunitiesView() {
     offset: 0,
     search: search.trim() || null,
   });
+  const qualified = useCompanies({
+    limit: PAGE_SIZE,
+    search: search.trim() || null,
+    qualifiedOnly: true,
+  });
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Fırsatlar"
-        subtitle="Apollo’dan bulunan karar vericiler ve olumlu yanıtlar. Sahte isim yok."
-        isRefreshing={isRefreshing || contacts.isRefreshing}
+        subtitle="Nitelikli şirketlerin ERP sinyali, ağrı hipotezi, Apollo kişileri ve olumlu yanıtları. Sahte isim yok."
+        isRefreshing={isRefreshing || contacts.isRefreshing || qualified.isRefreshing}
         onRefresh={() => {
           refresh();
           contacts.refresh();
+          qualified.refresh();
         }}
       >
         <SearchInput
@@ -98,6 +106,21 @@ export function OpportunitiesView() {
               },
             ]}
           />
+
+          <div className="space-y-2">
+            <h2 className="text-[13px] font-semibold text-ink">
+              Nitelikli şirketler
+            </h2>
+            {qualified.isLoading ? (
+              <ReplyTableSkeleton rows={3} />
+            ) : (
+              <CompanyPipelineTable
+                items={qualified.data?.items ?? []}
+                emptyMessage="Nitelikli veya yüksek öncelikli şirket yok. Apollo araması yalnızca bu statüler için çalışır."
+                onRefresh={qualified.refresh}
+              />
+            )}
+          </div>
 
           <div className="space-y-2">
             <h2 className="text-[13px] font-semibold text-ink">Karar vericiler</h2>

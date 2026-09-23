@@ -18,6 +18,7 @@ from api.database import Base, get_db
 from api.index import app
 from api.services import activity as activity_service
 from api.services import apollo as apollo_service
+from api.services import email_verify as email_verify_service
 from api.services import enrichment
 
 
@@ -33,6 +34,8 @@ def no_real_network(monkeypatch) -> None:
     monkeypatch.setattr(apollo_service.ApolloClient, "_request", explode)
     # .env'de anahtar olsa bile testler gerçek Apollo istemcisi kurmaz.
     monkeypatch.setattr(apollo_service, "_build_client", lambda: None)
+    # MX sorgusu gerçek DNS'e çıkmasın; testler `mx_lookup` ile ezer.
+    monkeypatch.setattr(email_verify_service, "resolve_mx", lambda _domain: True)
 
 
 @pytest.fixture
