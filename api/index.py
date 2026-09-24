@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from api import models  # noqa: F401  (metadata'nın yüklenmesi için gerekli)
-from api.config import get_settings
+from api.config import DEFAULT_CORS_ORIGINS, get_settings
 from api.database import Base, engine
 from api.routers import companies, dashboard, health, inbox, research
 
@@ -60,13 +60,21 @@ app = FastAPI(
 )
 
 # --- CORS -------------------------------------------------------------------
-# İzinli origin'ler .env içindeki CORS_ORIGINS ile yönetilir (virgülle ayrılmış).
-# Wildcard ("*") kullanıldığında tarayıcı kuralları gereği credential kapatılır.
+# Üretimde yalnızca CORS_ORIGINS. Geliştirmede Next'in 3000/3001 adresleri
+# her zaman eklenir; .env listesi 3000'de kalsa bile 3001 çalışır.
+_cors_origins = list(settings.cors_origins)
+if not settings.is_production:
+    _cors_origins = list(dict.fromkeys([*_cors_origins, *DEFAULT_CORS_ORIGINS]))
+_cors_regex = settings.cors_origin_regex or None
+if not settings.is_production:
+    _local = r"https?://(localhost|127\.0\.0\.1):\d+"
+    _cors_regex = f"(?:{_cors_regex})|{_local}" if _cors_regex else _local
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(settings.cors_origins),
-    allow_origin_regex=settings.cors_origin_regex or None,
-    allow_credentials=settings.allow_credentials,
+    allow_origins=_cors_origins or ["*"],
+    allow_origin_regex=_cors_regex,
+    allow_credentials=settings.allow_credentials and "*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["X-Total-Count"],

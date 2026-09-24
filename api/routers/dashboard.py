@@ -4,22 +4,24 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from api.config import get_settings
 from api.database import get_db
 from api.schemas import ActivityOut, DashboardStatsResponse
-from api.services.dashboard import build_dashboard_stats, fetch_recent_activity
+from api.services.dashboard import (
+    build_dashboard_stats,
+    empty_dashboard_stats,
+    fetch_recent_activity,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Prefix `index.py` içinde verilir -> `/api/dashboard-stats`, `/api/activity`.
 router = APIRouter(tags=["dashboard"])
-
-DB_UNAVAILABLE = "Veritabanına şu anda ulaşılamıyor, lütfen tekrar deneyin."
 
 
 @router.get(
@@ -41,10 +43,9 @@ def get_dashboard_stats(
     try:
         return build_dashboard_stats(db, limit)
     except SQLAlchemyError as exc:
-        logger.exception("Dashboard istatistikleri hesaplanamadı")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=DB_UNAVAILABLE
-        ) from exc
+        logger.exception("Dashboard istatistikleri hesaplanamadı; boş özet dönülüyor")
+        db.rollback()
+        return empty_dashboard_stats()
 
 
 @router.get(

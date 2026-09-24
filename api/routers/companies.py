@@ -7,7 +7,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from api import models
@@ -86,14 +86,18 @@ def list_companies(
     ),
 ) -> CompanyListOut:
     """Puan, kanıt ve Apollo kişileriyle sayfalanmış şirket listesi."""
-    return fetch_companies(
-        db,
-        limit=limit,
-        offset=offset,
-        status_filter=status_filter,
-        search=search,
-        qualified_only=qualified_only,
-    )
+    try:
+        return fetch_companies(
+            db,
+            limit=limit,
+            offset=offset,
+            status_filter=status_filter,
+            search=search,
+            qualified_only=qualified_only,
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        return CompanyListOut(items=[], total=0, limit=limit, offset=offset)
 
 
 @router.get("/{company_id}", response_model=CompanyOut, summary="Tek şirket detayı")

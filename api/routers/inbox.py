@@ -7,6 +7,7 @@ AI'ın olumlu sınıflandırdığı yanıtları döndürür.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from api.database import get_db
@@ -55,13 +56,17 @@ def list_contacts(
         description="Yalnızca qualified / high priority şirketlerin kişileri.",
     ),
 ) -> ContactListOut:
-    return fetch_contacts(
-        db,
-        limit=limit,
-        offset=offset,
-        search=search,
-        qualified_only=qualified_only,
-    )
+    try:
+        return fetch_contacts(
+            db,
+            limit=limit,
+            offset=offset,
+            search=search,
+            qualified_only=qualified_only,
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        return ContactListOut(items=[], total=0, limit=limit, offset=offset)
 
 
 @router.patch(
@@ -127,14 +132,27 @@ def list_inbox(
                 ),
             )
 
-    return fetch_inbox(
-        db,
-        limit=limit,
-        offset=offset,
-        classification=classification,
-        unread_only=unread_only,
-        search=search,
-    )
+    try:
+        return fetch_inbox(
+            db,
+            limit=limit,
+            offset=offset,
+            classification=classification,
+            unread_only=unread_only,
+            search=search,
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        return InboxResponse(
+            items=[],
+            total=0,
+            limit=limit,
+            offset=offset,
+            inbound_total=0,
+            unread_count=0,
+            positive_count=0,
+            classification_breakdown=[],
+        )
 
 
 @router.get(
@@ -149,7 +167,18 @@ def list_opportunities(
     search: str | None = Query(default=None, min_length=1, max_length=200),
 ) -> OpportunitiesResponse:
     """Şirket puanına göre sıralı olumlu yanıt listesi."""
-    return fetch_opportunities(db, limit=limit, offset=offset, search=search)
+    try:
+        return fetch_opportunities(db, limit=limit, offset=offset, search=search)
+    except SQLAlchemyError:
+        db.rollback()
+        return OpportunitiesResponse(
+            items=[],
+            total=0,
+            limit=limit,
+            offset=offset,
+            unique_companies=0,
+            average_score=None,
+        )
 
 
 @router.patch(

@@ -67,6 +67,51 @@ def _naive_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=None)
 
 
+def empty_company_stats() -> DashboardStats:
+    """Boş veritabanı / okuma hatası için sıfırlı sayaçlar."""
+    return DashboardStats(
+        total_companies=0,
+        researched_companies=0,
+        pending_companies=0,
+        analyzed_companies=0,
+        suitable_companies=0,
+        companies_added_today=0,
+        companies_added_last_7_days=0,
+        total_contacts=0,
+        average_overall_score=None,
+        high_intent_companies=0,
+        positive_replies=0,
+        unread_replies=0,
+        review_companies=0,
+    )
+
+
+def _empty_daily(now: datetime) -> list[DailyCount]:
+    today = now.date()
+    days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
+    return [
+        DailyCount(
+            date=day.isoformat(),
+            label=f"{day.day} {_MONTHS_TR[day.month]}",
+            analyzed=0,
+            positive_replies=0,
+        )
+        for day in days
+    ]
+
+
+def empty_dashboard_stats() -> DashboardStatsResponse:
+    now = _utc_now()
+    return DashboardStatsResponse(
+        generated_at=now,
+        stats=empty_company_stats(),
+        ai_status=build_ai_status([], now),
+        status_breakdown=[],
+        top_industries=[],
+        daily=_empty_daily(now),
+    )
+
+
 def _company_counters(db: Session, now: datetime) -> DashboardStats:
     status = normalized_status(Company.status)
     today_start = _naive_utc(now).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -286,11 +331,33 @@ def build_ai_status(activities: list[ActivityOut], now: datetime) -> AiStatus:
 def build_dashboard_stats(db: Session, activity_limit: int) -> DashboardStatsResponse:
     now = _utc_now()
     activities = fetch_recent_activity(db, activity_limit)
+
+    try:
+        stats = _company_counters(db, now)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.warning("Dashboard sayaçları okunamadı; sıfır dönülüyor: %s", exc)
+        stats = empty_company_stats()
+
+    try:
+        breakdown = _status_breakdown(db)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.warning("Durum dağılımı okunamadı: %s", exc)
+        breakdown = []
+
+    try:
+        industries = _top_industries(db)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.warning("Sektör dağılımı okunamadı: %s", exc)
+        industries = []
+
     return DashboardStatsResponse(
         generated_at=now,
-        stats=_company_counters(db, now),
+        stats=stats,
         ai_status=build_ai_status(activities, now),
-        status_breakdown=_status_breakdown(db),
-        top_industries=_top_industries(db),
+        status_breakdown=breakdown,
+        top_industries=industries,
         daily=_daily_counts(db, now),
     )

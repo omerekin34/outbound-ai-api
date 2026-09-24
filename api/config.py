@@ -17,16 +17,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Frontend geliştirme sunucularının varsayılan adresleri (Next.js / Vite).
+# Next bazen 3000 doluysa 3001'e düşer; ikisini de açık tutuyoruz.
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:8080",
 )
 
-# Vercel preview deployment'larını otomatik kabul et.
-DEFAULT_CORS_ORIGIN_REGEX = r"https://.*\.vercel\.app"
+# Vercel preview + yerel Next/Vite portları (3000, 3001, …).
+DEFAULT_CORS_ORIGIN_REGEX = (
+    r"https://.*\.vercel\.app|https?://(localhost|127\.0\.0\.1):\d+"
+)
 
 
 def _env(name: str, default: str = "") -> str:

@@ -43,3 +43,41 @@ def test_suitable_count_excludes_low_priority_and_reject(
     assert breakdown.get(STATUS_QUALIFIED) == 1
     assert breakdown.get(STATUS_HIGH_PRIORITY) == 1
     assert breakdown.get(STATUS_REJECT) == 1
+
+
+def test_empty_database_returns_zero_stats(client: TestClient) -> None:
+    body = client.get("/api/dashboard-stats").json()
+    stats = body["stats"]
+
+    assert stats["total_companies"] == 0
+    assert stats["suitable_companies"] == 0
+    assert stats["total_contacts"] == 0
+    assert stats["high_intent_companies"] == 0
+    assert stats["positive_replies"] == 0
+    assert body["status_breakdown"] == []
+    assert body["top_industries"] == []
+    assert len(body["daily"]) == 7
+    assert all(day["analyzed"] == 0 and day["positive_replies"] == 0 for day in body["daily"])
+    assert body["ai_status"]["state"] == "idle"
+    assert client.get("/api/companies").json() == {
+        "items": [],
+        "total": 0,
+        "limit": 25,
+        "offset": 0,
+    }
+
+
+def test_cors_allows_next_on_port_3001(client: TestClient) -> None:
+    origin = "http://localhost:3001"
+    preflight = client.options(
+        "/api/dashboard-stats",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert preflight.headers.get("access-control-allow-origin") == origin
+
+    response = client.get("/api/dashboard-stats", headers={"Origin": origin})
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == origin
