@@ -49,10 +49,7 @@ export function ActivityFeed({ aiStatus }: { aiStatus: AiStatus }) {
 
             return (
               <li key={activity.id}>
-                <button
-                  type="button"
-                  className="group flex w-full items-center gap-3 py-2.5 text-left"
-                >
+                <div className="group flex w-full items-center gap-3 py-2.5 text-left">
                   <span
                     className={`flex size-6 shrink-0 items-center justify-center rounded-lg ${
                       view.tone === "danger"
@@ -85,12 +82,26 @@ export function ActivityFeed({ aiStatus }: { aiStatus: AiStatus }) {
                     </span>
                   ) : null}
 
-                  <span className="hidden max-w-[110px] shrink-0 truncate text-[11px] text-ink-muted sm:block">
-                    {view.tag}
-                  </span>
-
-                  <ChevronRight className="size-3.5 shrink-0 text-ink-muted transition-transform group-hover:translate-x-0.5" />
-                </button>
+                  {view.href ? (
+                    <a
+                      href={view.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`${view.tag} sitesini aç`}
+                      className="flex max-w-[140px] shrink-0 items-center gap-1 text-[11px] text-ink-muted transition-colors hover:text-brand"
+                    >
+                      <span className="hidden truncate sm:block">{view.tag}</span>
+                      <ChevronRight className="size-3.5 shrink-0 transition-transform group-hover:translate-x-0.5" />
+                    </a>
+                  ) : (
+                    <>
+                      <span className="hidden max-w-[110px] shrink-0 truncate text-[11px] text-ink-muted sm:block">
+                        {view.tag}
+                      </span>
+                      <ChevronRight className="size-3.5 shrink-0 text-ink-muted" />
+                    </>
+                  )}
+                </div>
               </li>
             );
           })}

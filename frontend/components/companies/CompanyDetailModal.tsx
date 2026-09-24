@@ -17,6 +17,8 @@ const STATUS_LABEL: Record<string, string> = {
   "low priority": "Düşük öncelik",
   reject: "Red",
   review: "İnceleme",
+  timeout: "Zaman aşımı",
+  failed: "Başarısız",
 };
 
 function scoreLabel(value: number | null | undefined): string {

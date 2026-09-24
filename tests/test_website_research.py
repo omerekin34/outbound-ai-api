@@ -14,6 +14,8 @@ from api.services.website_research import (
     CATEGORY_ORDER,
     MAX_PAGES,
     ScrapedPage,
+    ScrapeTimeoutError,
+    bounded_scrape_timeout,
     classify_url,
     normalize_url,
     research_website,
@@ -358,3 +360,26 @@ def test_prompt_labels_every_page_with_url_and_category() -> None:
     assert "Kategori: homepage" in prompt
     assert f"URL: {BASE}/bayiler" in prompt
     assert "Kategori: dealers" in prompt
+
+
+def test_scrape_timeout_is_capped_at_60_seconds() -> None:
+    assert bounded_scrape_timeout(180) == 60
+    assert bounded_scrape_timeout(1) == 5
+    assert bounded_scrape_timeout(45) == 45
+
+
+def test_hanging_firecrawl_fails_within_timeout() -> None:
+    import time
+
+    class SlowFirecrawl:
+        def map(self, url: str, **kwargs: Any) -> Any:
+            time.sleep(8)
+            return type("MapData", (), {"links": []})()
+
+        def batch_scrape(self, urls: list[str], **kwargs: Any) -> Any:
+            time.sleep(8)
+            return FakeJob(data=[])
+
+    with pytest.raises(ScrapeTimeoutError) as caught:
+        research_website(SlowFirecrawl(), BASE, timeout_seconds=1)
+    assert caught.value.seconds == 5

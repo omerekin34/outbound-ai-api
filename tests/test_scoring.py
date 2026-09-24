@@ -60,6 +60,7 @@ def test_extraction_prompt_does_not_ask_for_scores() -> None:
     assert '"pain_hypothesis"' in EXTRACTION_SYSTEM_PROMPT
     assert "sektör çıkarımı" in prompt
     assert "50–249" in PRODUCT_CONTEXT
+    assert "reasoning" in EXTRACTION_SYSTEM_PROMPT
 
 
 # --- fact normalizasyonu ---------------------------------------------------
@@ -152,6 +153,28 @@ FULL_PROFILE = {
         "large_sales_team": _evidence("Geniş satış kadrosu"),
     },
 }
+
+
+def test_profile_reasoning_is_merged_into_evidence() -> None:
+    assembled = assemble_analysis(
+        {
+            "b2b": True,
+            "evidence": {
+                "b2b": {
+                    "value": "B2B",
+                    "confidence": 0.9,
+                    "reasoning": "Kurumsal müşteri dili kullanılıyor.",
+                    "evidence_text": "Toptan satış yapıyoruz.",
+                    "source_url": f"{BASE}/",
+                }
+            },
+        },
+        {f"{BASE}/"},
+        f"{BASE}/",
+    )
+    b2b = next(fact for fact in assembled["facts"] if fact["fact_type"] == "b2b")
+    assert "Kurumsal müşteri dili" in b2b["evidence_text"]
+    assert "Toptan satış" in b2b["evidence_text"]
 
 
 def test_profile_without_evidence_does_not_create_facts() -> None:

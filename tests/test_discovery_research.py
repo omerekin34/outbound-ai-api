@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -103,3 +104,35 @@ def test_background_job_runs_full_pipeline(
     assert len(facts) == 3
     assert score.overall_score is not None
     assert fake.scraped_urls
+
+
+def test_scrape_timeout_marks_company_timeout(db_sessionmaker, monkeypatch) -> None:
+    from api.services.research_job import ResearchJobError, execute_research_pipeline
+    from api.services.scoring import STATUS_TIMEOUT
+    from api.services.website_research import ScrapeTimeoutError
+
+    monkeypatch.setattr(
+        research_job_service,
+        "research_website",
+        lambda *_a, **_k: (_ for _ in ()).throw(ScrapeTimeoutError(60)),
+    )
+    monkeypatch.setattr(research_job_service, "firecrawl_client", lambda: object())
+
+    with db_sessionmaker() as session:
+        company = models.Company(
+            id="c-timeout",
+            name="Yavaş Site",
+            domain="yavas.example",
+            website="https://yavas.example",
+            status="new",
+        )
+        session.add(company)
+        session.commit()
+
+        with pytest.raises(ResearchJobError, match="zaman aşımı"):
+            execute_research_pipeline(session, company, "https://yavas.example")
+        session.commit()
+        stored = session.get(models.Company, "c-timeout")
+
+    assert stored is not None
+    assert stored.status == STATUS_TIMEOUT

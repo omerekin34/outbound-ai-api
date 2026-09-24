@@ -10,10 +10,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 
+# Proje kökündeki `.env` — uvicorn hangi klasörden açılırsa açılsın.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(_PROJECT_ROOT / ".env")
 load_dotenv()
 
 # Frontend geliştirme sunucularının varsayılan adresleri (Next.js / Vite).
@@ -36,7 +40,9 @@ DEFAULT_CORS_ORIGIN_REGEX = (
 
 def _env(name: str, default: str = "") -> str:
     value = os.getenv(name)
-    return value.strip() if value else default
+    if not value:
+        return default
+    return value.strip().strip("\ufeff").strip('"').strip("'")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -197,6 +203,6 @@ def get_settings() -> Settings:
         research_map_limit=_env_int("RESEARCH_MAP_LIMIT", 300),
         research_chars_per_page=_env_int("RESEARCH_CHARS_PER_PAGE", 2_500),
         research_total_chars=_env_int("RESEARCH_TOTAL_CHARS", 30_000),
-        research_scrape_timeout_seconds=_env_int("RESEARCH_SCRAPE_TIMEOUT", 180),
+        research_scrape_timeout_seconds=_env_int("RESEARCH_SCRAPE_TIMEOUT", 60),
         research_job_gap_seconds=_env_float("RESEARCH_JOB_GAP_SECONDS", 5.0),
     )

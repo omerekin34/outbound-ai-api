@@ -50,8 +50,11 @@ Türk siteleri "ERP kullanıyoruz" / "teklif usulü çalışıyoruz" yazmasa bil
 - `multiple_locations`
 evidence_text'e "Sektör çıkarımı: …" diye yaz; uydurma alıntı yapma.
 
-`true` olan diğer alanlar için `evidence` içinde birebir alıntı:
-- `value`: kısa, somut olgu
+HER boolean alan (true VEYA false) için `evidence` içinde gerekçe zorunludur:
+- `reasoning`: 1 kısa cümle — neden True veya False dediğini metne dayandır.
+  Örnek True: "Hakkımızda sayfasında 'kurumsal müşterilere toptan satış' yazıyor."
+  Örnek False: "Çalışan sayısı veya ekip büyüklüğü metinde geçmiyor."
+- `value`: kısa, somut olgu (true ise)
 - `evidence_text`: sayfadan BİREBİR cümle veya sektör çıkarımı cümlesi
 - `source_url`: yalnızca verilen URL'lerden biri
 - `confidence`: 0.0–1.0
@@ -88,7 +91,15 @@ evidence_text'e "Sektör çıkarımı: …" diye yaz; uydurma alıntı yapma.
     "b2b": {
       "value": "B2B toptan satış",
       "confidence": 0.9,
+      "reasoning": "Hakkımızda sayfası kurumsal / toptan müşteri dilini kullanıyor.",
       "evidence_text": "Kurumsal müşterilere toptan satış yapıyoruz.",
+      "source_url": "https://ornek.com/hakkimizda"
+    },
+    "sales_operations": {
+      "value": "Satış operasyonu yok",
+      "confidence": 0.6,
+      "reasoning": "Metinde satış operasyonu, sipariş süreci veya CRM ekibi geçmiyor.",
+      "evidence_text": "Satış operasyonu kanıtı yok.",
       "source_url": "https://ornek.com/hakkimizda"
     }
   }
@@ -266,6 +277,11 @@ def _fact_from_evidence(
 ) -> dict[str, Any] | None:
     value = str(evidence.get("value") or default_value).strip()
     evidence_text = str(evidence.get("evidence_text") or "").strip()
+    reasoning = str(evidence.get("reasoning") or "").strip()
+    if reasoning and evidence_text and reasoning not in evidence_text:
+        evidence_text = f"{reasoning} {evidence_text}"
+    elif reasoning and not evidence_text:
+        evidence_text = reasoning
     if not value or not evidence_text:
         return None
     source_url = evidence.get("source_url")

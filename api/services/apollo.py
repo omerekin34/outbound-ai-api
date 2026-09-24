@@ -11,10 +11,12 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
+from dotenv import load_dotenv
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -26,6 +28,7 @@ from api.services.scoring import DEEP_RESEARCH_STATUSES
 logger = logging.getLogger(__name__)
 
 APOLLO_BASE = "https://api.apollo.io/api/v1"
+_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 # Resmi People Search; 403 olursa eski `search`, sonra kayıtlı `contacts/search`.
 PEOPLE_SEARCH_PATHS = ("/mixed_people/api_search", "/mixed_people/search")
 CONTACTS_SEARCH_PATH = "/contacts/search"
@@ -173,13 +176,46 @@ class ApolloSearchError(RuntimeError):
     """Apollo People Search reddedildi — anahtar, kapsam veya plan."""
 
 
+def _clean_api_key(raw: str) -> str:
+    """BOM, tırnak, Bearer ve satır sonlarını temizler — anahtarı loglamaz."""
+    cleaned = raw.replace("\ufeff", "").strip()
+    cleaned = cleaned.strip('"').strip("'")
+    if cleaned.lower().startswith("bearer"):
+        cleaned = cleaned[6:].lstrip(" :").strip().strip('"').strip("'")
+    return "".join(cleaned.split())
+
+
+def _read_dotenv_value(path: Path, name: str) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() == name:
+            return value.strip()
+    return ""
+
+
 def _apollo_api_key() -> str | None:
-    """Anahtarı istek anında okur; tırnak / Bearer önekini temizler."""
-    raw = (os.getenv("APOLLO_API_KEY") or get_settings().apollo_api_key or "").strip()
-    raw = raw.strip('"').strip("'")
-    if raw.lower().startswith("bearer "):
-        raw = raw[7:].strip().strip('"').strip("'")
-    return raw or None
+    """Anahtarı istek anında `.env` dosyasından okur.
+
+    Testlerde `APOLLO_API_KEY` ortam değişkeni önceliklidir; canlıda `.env`
+    dosyası süreçte kalan eski değeri ezer (anahtar döndürmeden güncellenir).
+    """
+    file_value = _read_dotenv_value(_ENV_PATH, "APOLLO_API_KEY")
+    process_value = os.getenv("APOLLO_API_KEY") or ""
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        raw = process_value or file_value
+    else:
+        load_dotenv(_ENV_PATH)
+        raw = file_value or process_value or get_settings().apollo_api_key or ""
+    return _clean_api_key(raw) or None
 
 
 def _response_error_text(response: httpx.Response | None) -> str:
@@ -201,21 +237,70 @@ def _people_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [row for row in people if isinstance(row, dict)]
 
 
+def _header_only_auth(api_key: str) -> dict[str, str]:
+    """Apollo: anahtar yalnızca header'da. Query string'e asla konmaz."""
+    return {
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json",
+        "x-api-key": api_key,
+    }
+
+
+def _json_without_secrets(json_body: dict[str, Any] | None) -> dict[str, Any]:
+    body = dict(json_body or {})
+    for secret_key in ("api_key", "apiKey", "x-api-key", "X-Api-Key"):
+        body.pop(secret_key, None)
+    return body
+
+
+def send_apollo_request(
+    method: str,
+    path: str,
+    *,
+    api_key: str,
+    json_body: dict[str, Any] | None = None,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    """POST JSON + header auth. `params` verilmez; URL'de `?` olmaz."""
+    path = path.split("?", 1)[0]
+    url = f"{APOLLO_BASE}{path}"
+    if "api_key=" in url.lower() or "?" in url:
+        raise RuntimeError("Apollo URL'sine api_key konamaz.")
+    headers = _header_only_auth(api_key)
+    body = _json_without_secrets(json_body)
+    response = httpx.request(
+        method,
+        url,
+        headers=headers,
+        json=body,
+        timeout=timeout,
+    )
+    if response.status_code >= 400:
+        logger.warning(
+            "Apollo %s %s → %s (key_present=%s key_len=%d): %s",
+            method,
+            path,
+            response.status_code,
+            bool(api_key),
+            len(api_key),
+            _response_error_text(response),
+        )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
 class ApolloClient:
     """Apollo REST istemcisi: people search + bulk enrich."""
 
     def __init__(self, api_key: str, *, timeout: float = 30.0) -> None:
-        self.api_key = api_key
+        self.api_key = _clean_api_key(api_key)
         self.timeout = timeout
 
     def _headers(self) -> dict[str, str]:
-        return {
-            "x-api-key": self.api_key,
-            "X-Api-Key": self.api_key,
-            "Content-Type": "application/json",
-            "Cache-Control": "no-cache",
-            "Accept": "application/json",
-        }
+        return _header_only_auth(self.api_key)
 
     def _request(
         self,
@@ -224,33 +309,17 @@ class ApolloClient:
         *,
         json_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        url = f"{APOLLO_BASE}{path}"
         try:
-            response = httpx.request(
+            return send_apollo_request(
                 method,
-                url,
-                headers=self._headers(),
-                json=json_body or {},
+                path,
+                api_key=self.api_key,
+                json_body=json_body,
                 timeout=self.timeout,
             )
-            if response.status_code >= 400:
-                logger.warning(
-                    "Apollo %s %s → %s (key_present=%s key_len=%d): %s",
-                    method,
-                    path,
-                    response.status_code,
-                    bool(self.api_key),
-                    len(self.api_key),
-                    _response_error_text(response),
-                )
-            response.raise_for_status()
         except httpx.HTTPError as exc:
             logger.warning("Apollo isteği başarısız (%s %s): %s", method, path, exc)
             raise
-        payload = response.json()
-        if not isinstance(payload, dict):
-            return {}
-        return payload
 
     def _search_body(self, domain: str, per_page: int) -> dict[str, Any]:
         return {

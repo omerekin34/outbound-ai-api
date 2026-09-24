@@ -307,13 +307,64 @@ def test_apollo_api_key_strips_quotes_and_bearer(monkeypatch) -> None:
     assert apollo_mod._apollo_api_key() == "abc123"
 
 
+def test_apollo_api_key_strips_whitespace_and_newlines(monkeypatch) -> None:
+    from api.services import apollo as apollo_mod
+
+    monkeypatch.setenv("APOLLO_API_KEY", "  ab\ncd  ")
+    assert apollo_mod._apollo_api_key() == "abcd"
+    headers = apollo_mod.ApolloClient("  xy z  ")._headers()
+    assert headers["x-api-key"] == "xyz"
+
+
 def test_apollo_headers_include_api_key() -> None:
     from api.services.apollo import ApolloClient
 
     headers = ApolloClient("secret-key")._headers()
-    assert headers["x-api-key"] == "secret-key"
-    assert headers["Content-Type"] == "application/json"
-    assert headers["Cache-Control"] == "no-cache"
+    assert headers == {
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json",
+        "x-api-key": "secret-key",
+    }
+    assert "X-Api-Key" not in headers
+
+
+def test_apollo_request_never_puts_key_in_url_or_query(monkeypatch) -> None:
+    from api.services import apollo as apollo_mod
+
+    calls: list[dict] = []
+
+    def fake_httpx(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+
+        class Response:
+            status_code = 200
+            text = "{}"
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {"people": []}
+
+        return Response()
+
+    monkeypatch.setattr(apollo_mod.httpx, "request", fake_httpx)
+    apollo_mod.send_apollo_request(
+        "POST",
+        "/mixed_people/api_search?api_key=should-be-stripped",
+        api_key="real-secret",
+        json_body={"api_key": "should-be-removed", "page": 1},
+    )
+    assert len(calls) == 1
+    assert calls[0]["url"] == "https://api.apollo.io/api/v1/mixed_people/api_search"
+    assert "api_key" not in calls[0]["url"]
+    assert "?" not in calls[0]["url"]
+    assert "params" not in calls[0]
+    assert calls[0]["json"] == {"page": 1}
+    assert "api_key" not in calls[0]["json"]
+    assert calls[0]["headers"]["x-api-key"] == "real-secret"
+    assert calls[0]["headers"]["Cache-Control"] == "no-cache"
+    assert calls[0]["headers"]["Content-Type"] == "application/json"
 
 
 def _apollo_http_error(status: int, payload: dict) -> Exception:
@@ -363,6 +414,8 @@ def test_apollo_search_posts_json_to_people_search(monkeypatch) -> None:
     assert "Sales Director" in body["person_titles"]
     assert "General Manager" in body["person_titles"]
     assert calls[0]["headers"]["x-api-key"] == "k"
+    assert "X-Api-Key" not in calls[0]["headers"]
+    assert "api_key" not in calls[0]["json"]
 
 
 def test_apollo_search_falls_back_when_api_search_forbidden(monkeypatch) -> None:

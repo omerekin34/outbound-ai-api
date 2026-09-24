@@ -30,6 +30,8 @@ STATUS_LOW_PRIORITY = "low priority"
 STATUS_REVIEW = "review"
 STATUS_QUALIFIED = "qualified"
 STATUS_HIGH_PRIORITY = "high priority"
+STATUS_TIMEOUT = "timeout"
+STATUS_FAILED = "failed"
 
 # Step 20: yalnızca bu iki durumda derin araştırma açılır.
 DEEP_RESEARCH_STATUSES = frozenset({STATUS_QUALIFIED, STATUS_HIGH_PRIORITY})

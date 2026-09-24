@@ -18,14 +18,60 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass
-from typing import Any, Iterable, Protocol
+from typing import Any, Callable, Iterable, Protocol, TypeVar
 from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
 # Maliyet kuralı: yalnızca anasayfa, hakkında, ürünler. Asla 3'ü geçme.
 MAX_PAGES = 3
+# Bot korumalı sitelerde Firecrawl'ın kuyruğu kilitlemesini önler.
+HARD_SCRAPE_TIMEOUT_SECONDS = 60
+
+_T = TypeVar("_T")
+
+
+class ScrapeTimeoutError(TimeoutError):
+    """Firecrawl map/scrape verilen sürede bitmedi."""
+
+    def __init__(self, seconds: int) -> None:
+        self.seconds = seconds
+        super().__init__(
+            f"Firecrawl {seconds} sn içinde yanıt vermedi "
+            "(site yavaş veya bot koruması)."
+        )
+
+
+def bounded_scrape_timeout(seconds: int | None) -> int:
+    """Ortam değeri 60 sn'yi aşamaz; 5 sn'nin altına inemez."""
+    try:
+        value = int(seconds or HARD_SCRAPE_TIMEOUT_SECONDS)
+    except (TypeError, ValueError):
+        value = HARD_SCRAPE_TIMEOUT_SECONDS
+    return max(5, min(value, HARD_SCRAPE_TIMEOUT_SECONDS))
+
+
+def call_with_timeout(
+    func: Callable[..., _T], timeout_seconds: int, *args: Any, **kwargs: Any
+) -> _T:
+    """İş parçacığını bekletmeden sert zaman aşımı uygular.
+
+    `ThreadPoolExecutor` context manager'ı `shutdown(wait=True)` kullandığı
+    için takılı Firecrawl çağrısı yine de kuyruğu kilitlerdi. `wait=False`
+    ile işçi arka planda bırakılır, hat bırakılmaz.
+    """
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(func, *args, **kwargs)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FuturesTimeout as exc:
+        future.cancel()
+        raise ScrapeTimeoutError(timeout_seconds) from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 HOMEPAGE = "homepage"
 
@@ -453,15 +499,20 @@ def fallback_candidates(base_url: str) -> list[str]:
 
 
 def discover_candidate_urls(
-    client: SupportsFirecrawl, website: str, map_limit: int
+    client: SupportsFirecrawl,
+    website: str,
+    map_limit: int,
+    timeout_seconds: int = HARD_SCRAPE_TIMEOUT_SECONDS,
 ) -> list[str]:
     """Firecrawl `map` ile sitedeki URL'leri listeler (tarama yapmaz)."""
+    timeout_ms = max(1, timeout_seconds) * 1000
     try:
         result = client.map(
             website,
             limit=map_limit,
             include_subdomains=False,
             ignore_query_parameters=True,
+            timeout=timeout_ms,
         )
     except Exception as exc:  # SDK kendi hata tiplerini sarmalıyor
         logger.warning("Firecrawl map başarısız (%s): %s", website, exc)
@@ -504,11 +555,14 @@ def scrape_target_pages(
 
     category_by_url = {page.url: page.category for page in pages}
 
+    timeout_seconds = bounded_scrape_timeout(timeout_seconds)
+    timeout_ms = timeout_seconds * 1000
     job = client.batch_scrape(
         [page.url for page in pages],
         formats=["markdown"],
         only_main_content=True,
         ignore_invalid_urls=True,
+        timeout=timeout_ms,
         wait_timeout=timeout_seconds,
     )
 
@@ -544,7 +598,7 @@ def research_website(
     *,
     max_pages: int = MAX_PAGES,
     map_limit: int = 300,
-    timeout_seconds: int = 180,
+    timeout_seconds: int = HARD_SCRAPE_TIMEOUT_SECONDS,
 ) -> ResearchResult:
     """Workflow 3'ün tarama aşamasını uçtan uca yürütür."""
     base = normalize_url(website)
@@ -552,27 +606,35 @@ def research_website(
         raise ValueError(f"Geçersiz web sitesi adresi: {website!r}")
 
     limit = MAX_PAGES
+    timeout_seconds = bounded_scrape_timeout(timeout_seconds)
 
-    candidates = discover_candidate_urls(client, base, map_limit)
-    selected = select_target_pages(base, candidates, limit)
-    used_fallback = False
+    def _run() -> ResearchResult:
+        map_budget = min(20, timeout_seconds)
+        candidates = discover_candidate_urls(
+            client, base, map_limit, timeout_seconds=map_budget
+        )
+        selected = select_target_pages(base, candidates, limit)
+        used_fallback = False
 
-    # `map` yalnızca anasayfayı verdiyse kanonik yolları deneyelim.
-    if len(selected) <= 1:
-        used_fallback = True
-        selected = select_target_pages(
-            base, candidates + fallback_candidates(base), limit
+        # `map` yalnızca anasayfayı verdiyse kanonik yolları deneyelim.
+        if len(selected) <= 1:
+            used_fallback = True
+            selected = select_target_pages(
+                base, candidates + fallback_candidates(base), limit
+            )
+
+        # Spec 3: sınır `scrape_target_pages` içinde de bir kez daha uygulanır.
+        scraped, credits_used = scrape_target_pages(
+            client, selected, timeout_seconds
+        )
+        return ResearchResult(
+            website=base,
+            max_pages=limit,
+            discovered_urls=len(candidates),
+            selected_pages=selected,
+            scraped_pages=scraped,
+            credits_used=credits_used,
+            used_fallback=used_fallback,
         )
 
-    # Spec 3: sınır `scrape_target_pages` içinde de bir kez daha uygulanır.
-    scraped, credits_used = scrape_target_pages(client, selected, timeout_seconds)
-
-    return ResearchResult(
-        website=base,
-        max_pages=limit,
-        discovered_urls=len(candidates),
-        selected_pages=selected,
-        scraped_pages=scraped,
-        credits_used=credits_used,
-        used_fallback=used_fallback,
-    )
+    return call_with_timeout(_run, timeout_seconds)

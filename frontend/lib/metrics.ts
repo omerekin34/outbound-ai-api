@@ -52,7 +52,7 @@ export function buildMetricCards(data: DashboardStatsResponse): MetricCard[] {
       delta: null,
       caption: "qualified / high priority",
       provisional: false,
-      href: "/sirketler",
+      href: "/sirketler?filter=qualified",
     },
     {
       key: "contacts",
@@ -138,18 +138,70 @@ export interface ActivityView {
   title: string;
   description: string;
   tag: string;
+  href: string | null;
   icon: LucideIcon;
   tone: "neutral" | "danger";
+}
+
+function stringField(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+/** Aktivite kaydındaki siteyi tarayıcıda açılabilir https URL'ye çevirir. */
+export function activityWebsiteUrl(activity: Activity): string | null {
+  const detail = activity.detail ?? {};
+  const candidates = [
+    stringField(detail.website),
+    stringField(detail.domain),
+    stringField(activity.company_name),
+  ];
+
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const href = toHttpUrl(raw);
+    if (href) return href;
+  }
+  return null;
+}
+
+function toHttpUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || /\s/.test(trimmed)) return null;
+  const withProtocol = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+  try {
+    const parsed = new URL(withProtocol);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    if (!parsed.hostname.includes(".")) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+function hostnameFromUrl(href: string): string | null {
+  try {
+    return new URL(href).hostname.replace(/^www\./i, "") || null;
+  } catch {
+    return null;
+  }
 }
 
 export function describeActivity(activity: Activity): ActivityView {
   const eventLabel = EVENT_LABELS[activity.event_type] ?? activity.event_type;
   const isFailure = activity.status === "failed";
+  const href = activityWebsiteUrl(activity);
 
   return {
     title: `${eventLabel} ${STATUS_SUFFIX[activity.status]}`,
     description: activity.message,
-    tag: activity.company_name ?? eventLabel,
+    tag: (href ? hostnameFromUrl(href) : null) ?? activity.company_name ?? eventLabel,
+    href,
     icon: isFailure ? Ban : (EVENT_ICONS[activity.event_type] ?? Sparkles),
     tone: isFailure ? "danger" : "neutral",
   };

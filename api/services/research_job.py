@@ -23,7 +23,13 @@ from api.services.activity import EVENT_WEBSITE_RESEARCH, track_activity
 from api.services.analysis import persist_analysis
 from api.services.deep_research import pages_to_source_text
 from api.services.enrichment import analyze_scraped_pages, firecrawl_client
-from api.services.website_research import MAX_PAGES, research_website
+from api.services.scoring import STATUS_FAILED, STATUS_TIMEOUT
+from api.services.website_research import (
+    MAX_PAGES,
+    ScrapeTimeoutError,
+    bounded_scrape_timeout,
+    research_website,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,15 +144,27 @@ def execute_research_pipeline(
         except ValueError:
             pass
 
+    scrape_timeout = bounded_scrape_timeout(settings.research_scrape_timeout_seconds)
     with _pipeline_lock:
-        result = research_website(
-            firecrawl_client(),
-            website,
-            max_pages=max_pages,
-            map_limit=settings.research_map_limit,
-            timeout_seconds=settings.research_scrape_timeout_seconds,
-        )
+        try:
+            result = research_website(
+                firecrawl_client(),
+                website,
+                max_pages=max_pages,
+                map_limit=settings.research_map_limit,
+                timeout_seconds=scrape_timeout,
+            )
+        except ScrapeTimeoutError as exc:
+            company.status = STATUS_TIMEOUT
+            db.flush()
+            raise ResearchJobError(
+                f"Tarama zaman aşımı ({exc.seconds} sn): site yanıt vermedi "
+                "veya bot koruması tarayıcıyı durdurdu."
+            ) from exc
+
         if not result.scraped_pages:
+            company.status = STATUS_FAILED
+            db.flush()
             raise ResearchJobError(
                 f"Hedef sayfaların hiçbiri taranamadı "
                 f"({len(result.selected_pages)} sayfa denendi)."
@@ -188,8 +206,10 @@ def run_research_job(company_id: str, website: str) -> None:
                     return
                 except Exception as exc:
                     logger.exception("Keşif hattı başarısız: %s (%s)", company.name, website)
+                    if (company.status or "").strip().lower() in {"new", "pending", ""}:
+                        company.status = STATUS_FAILED
                     activity.fail(f"Keşif başarısız: {exc}")
-                    raise
+                    return
 
                 activity.succeed(
                     f"{company.name}: {len(result.scraped_pages)} sayfa tarandı, "
