@@ -40,6 +40,8 @@ class ResearchQueue:
         self._gap_seconds = gap_seconds
         self._lock = threading.Lock()
         self._started = False
+        self._run_enabled = threading.Event()
+        self._run_enabled.set()
 
     def enqueue(self, company_id: str, website: str) -> None:
         self._ensure_worker()
@@ -52,6 +54,21 @@ class ResearchQueue:
 
     def pending(self) -> int:
         return self._jobs.qsize()
+
+    @property
+    def is_paused(self) -> bool:
+        return not self._run_enabled.is_set()
+
+    def pause(self) -> None:
+        self._run_enabled.clear()
+        logger.info("Keşif kuyruğu duraklatıldı (bekleyen=%s)", self.pending())
+
+    def resume(self) -> None:
+        self._run_enabled.set()
+        logger.info("Keşif kuyruğu devam ediyor (bekleyen=%s)", self.pending())
+
+    def snapshot(self) -> dict[str, object]:
+        return {"paused": self.is_paused, "pending_jobs": self.pending()}
 
     def join(self, timeout: float = 5.0) -> None:
         """Kuyruk boşalana kadar bekler. Testler için."""
@@ -83,7 +100,9 @@ class ResearchQueue:
 
     def _worker(self) -> None:
         while True:
+            self._run_enabled.wait()
             company_id, website = self._jobs.get()
+            self._run_enabled.wait()
             try:
                 self._runner(company_id, website)
             except Exception:
@@ -116,3 +135,19 @@ def get_research_queue() -> ResearchQueue:
 def enqueue_research_job(company_id: str, website: str) -> None:
     """HTTP katmanının çağırdığı giriş: kuyruğa bırak, hemen dön."""
     get_research_queue().enqueue(company_id, website)
+
+
+def pipeline_snapshot() -> dict[str, object]:
+    return get_research_queue().snapshot()
+
+
+def pause_pipeline() -> dict[str, object]:
+    queue = get_research_queue()
+    queue.pause()
+    return queue.snapshot()
+
+
+def resume_pipeline() -> dict[str, object]:
+    queue = get_research_queue()
+    queue.resume()
+    return queue.snapshot()

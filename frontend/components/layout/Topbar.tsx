@@ -1,42 +1,93 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronRight, Pause, Search } from "lucide-react";
+import { useState } from "react";
+import { ChevronRight, Pause, Play } from "lucide-react";
+import useSWR from "swr";
 
+import {
+  ApiError,
+  fetchPipelineStatus,
+  setPipelinePaused,
+  type PipelineStatus,
+} from "@/lib/api";
+
+import { CompanySearch } from "./CompanySearch";
 import { findNavItem } from "./nav";
 
 export function Topbar() {
   const pathname = usePathname();
-  const section = findNavItem(pathname)?.label ?? "Genel Bakış";
+  const section = findNavItem(pathname) ?? findNavItem("/")!;
+  const [busy, setBusy] = useState(false);
+
+  const { data: pipeline, mutate } = useSWR<PipelineStatus, unknown>(
+    "pipeline-status",
+    () => fetchPipelineStatus(),
+    { refreshInterval: 8_000, keepPreviousData: true },
+  );
+
+  async function togglePipeline() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const next = await setPipelinePaused(!(pipeline?.paused ?? false));
+      await mutate(next, { revalidate: false });
+    } catch (error) {
+      window.alert(
+        error instanceof ApiError
+          ? error.message
+          : "Sistem durumu değiştirilemedi.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const paused = pipeline?.paused ?? false;
+  const pending = pipeline?.pending_jobs ?? 0;
+  const statusLabel = paused
+    ? "Duraklatıldı"
+    : pending > 0
+      ? `Kuyrukta ${pending}`
+      : "Canlı";
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-6 border-b border-line bg-canvas px-8">
+    <header className="relative z-20 flex h-14 shrink-0 items-center gap-6 border-b border-line bg-canvas px-8">
       <nav aria-label="Konum" className="flex items-center gap-1 text-[12px]">
-        <span className="text-ink-soft">{section}</span>
+        <Link href={section.href} className="text-ink-soft hover:text-ink">
+          {section.label}
+        </Link>
         <ChevronRight className="size-3 text-ink-muted" />
-        <span className="text-ink-muted">Ana sayfa</span>
+        <Link href="/" className="text-ink-muted hover:text-ink">
+          Ana sayfa
+        </Link>
       </nav>
 
-      <div className="relative w-full max-w-[320px]">
-        <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-ink-muted" />
-        <input
-          type="search"
-          placeholder="Ara..."
-          aria-label="Ara"
-          className="h-8 w-full rounded-full border border-line bg-surface pr-3 pl-9 text-[12px] text-ink placeholder:text-ink-muted focus:border-brand focus:ring-2 focus:ring-brand/15 focus:outline-none"
-        />
-      </div>
+      <CompanySearch />
 
       <div className="ml-auto flex items-center gap-2.5">
-        <span className="rounded-full border border-accent-line bg-accent-soft px-2.5 py-1 text-[11px] font-medium text-accent">
-          Konsept • Örnek veri
+        <span
+          className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+            paused
+              ? "border-accent-line bg-accent-soft text-accent"
+              : "border-brand/30 bg-brand-soft text-brand"
+          }`}
+        >
+          {statusLabel}
         </span>
         <button
           type="button"
-          className="flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-brand-deep"
+          onClick={() => void togglePipeline()}
+          disabled={busy}
+          className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[12px] font-medium text-ink transition-colors hover:border-danger hover:text-danger disabled:opacity-50"
         >
-          <Pause className="size-3 fill-current" />
-          Sistemi durdur
+          {paused ? (
+            <Play className="size-3 fill-current" />
+          ) : (
+            <Pause className="size-3 fill-current" />
+          )}
+          {paused ? "Sistemi başlat" : "Sistemi durdur"}
         </button>
       </div>
     </header>

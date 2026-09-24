@@ -26,33 +26,40 @@ function yFor(value: number, yMax: number): number {
   return PLOT_BOTTOM - ratio * (PLOT_BOTTOM - PLOT_TOP);
 }
 
-export function ResponseChart({ daily }: { daily: DailyCount[] }) {
+export function ResponseChart({
+  daily,
+  title = "Son 7 gün",
+}: {
+  daily: DailyCount[];
+  title?: string;
+}) {
   const labels = daily.map((row) => row.label);
   const series: Series[] = [
     {
       label: "Olumlu yanıt",
       values: daily.map((row) => row.positive_replies),
-      lineClass: "stroke-brand",
-      dotClass: "fill-brand",
-      legendClass: "bg-brand",
+      lineClass: "stroke-success",
+      dotClass: "fill-success",
+      legendClass: "bg-success",
     },
     {
       label: "Analiz edilen",
       values: daily.map((row) => row.analyzed),
-      lineClass: "stroke-brand-light",
-      dotClass: "fill-brand-light",
-      legendClass: "bg-brand-light",
+      lineClass: "stroke-brand",
+      dotClass: "fill-brand",
+      legendClass: "bg-brand",
     },
   ];
   const peak = Math.max(0, ...series.flatMap((item) => item.values));
   const yMax = peak <= 4 ? 4 : Math.ceil(peak / 2) * 2;
   const yTicks = [0, yMax / 2, yMax];
   const pointCount = labels.length;
+  const labelStep = pointCount > 14 ? 4 : pointCount > 8 ? 2 : 1;
 
   return (
-    <Card className="p-4">
+    <Card className="p-4" id="gunluk-ozet">
       <div className="flex items-start justify-between">
-        <CardTitle>Son 7 gün</CardTitle>
+        <CardTitle>{title}</CardTitle>
         <ul className="flex items-center gap-3">
           {series.map((item) => (
             <li
@@ -75,7 +82,7 @@ export function ResponseChart({ daily }: { daily: DailyCount[] }) {
           viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
           className="mt-2 h-auto w-full"
           role="img"
-          aria-label="Son 7 günde analiz edilen şirket ve olumlu yanıt"
+          aria-label={`${title}: analiz edilen şirket ve olumlu yanıt`}
         >
           {yTicks.map((tick) => {
             const y = yFor(tick, yMax);
@@ -137,7 +144,7 @@ export function ResponseChart({ daily }: { daily: DailyCount[] }) {
               textAnchor="middle"
               className="fill-ink-muted text-[9px]"
             >
-              {label}
+              {index % labelStep === 0 || index === pointCount - 1 ? label : ""}
             </text>
           ))}
         </svg>

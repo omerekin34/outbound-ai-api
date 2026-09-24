@@ -81,3 +81,14 @@ def test_cors_allows_next_on_port_3001(client: TestClient) -> None:
     response = client.get("/api/dashboard-stats", headers={"Origin": origin})
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") == origin
+
+
+def test_dashboard_daily_window_follows_days_query(client: TestClient) -> None:
+    default = client.get("/api/dashboard-stats").json()["daily"]
+    fortnight = client.get("/api/dashboard-stats?days=14").json()["daily"]
+    today = client.get("/api/dashboard-stats?days=1").json()["daily"]
+
+    assert len(default) == 7
+    assert len(fortnight) == 14
+    assert len(today) == 1
+    assert client.get("/api/dashboard-stats?days=99").status_code == 422

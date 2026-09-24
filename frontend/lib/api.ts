@@ -122,9 +122,14 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
 }
 
 export function fetchDashboardStats(
+  days = 7,
   signal?: AbortSignal,
 ): Promise<DashboardStatsResponse> {
-  return request<DashboardStatsResponse>("/api/dashboard-stats", signal);
+  const params = new URLSearchParams({ days: String(days) });
+  return request<DashboardStatsResponse>(
+    `/api/dashboard-stats?${params.toString()}`,
+    signal,
+  );
 }
 
 export interface CompanyFact {
@@ -403,6 +408,38 @@ export async function startResearch(domain: string): Promise<ResearchAccepted> {
   }
 
   return (await response.json()) as ResearchAccepted;
+}
+
+export interface PipelineStatus {
+  paused: boolean;
+  pending_jobs: number;
+}
+
+export function fetchPipelineStatus(
+  signal?: AbortSignal,
+): Promise<PipelineStatus> {
+  return request<PipelineStatus>("/api/pipeline", signal);
+}
+
+export async function setPipelinePaused(
+  paused: boolean,
+): Promise<PipelineStatus> {
+  const path = paused ? "/api/pipeline/pause" : "/api/pipeline/resume";
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+    });
+  } catch {
+    throw new ApiError(
+      `API'ye ulaşılamadı (${API_BASE_URL}). FastAPI sunucusunun çalıştığından emin olun.`,
+    );
+  }
+  if (!response.ok) {
+    throw new ApiError(`İstek başarısız (HTTP ${response.status}).`, response.status);
+  }
+  return (await response.json()) as PipelineStatus;
 }
 
 export async function saveContactEmail(

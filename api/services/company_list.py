@@ -97,6 +97,7 @@ def fetch_companies(
         filters.append(
             func.lower(func.coalesce(models.Company.name, "")).like(pattern)
             | func.lower(func.coalesce(models.Company.domain, "")).like(pattern)
+            | func.lower(func.coalesce(models.Company.website, "")).like(pattern)
         )
 
     total = db.execute(

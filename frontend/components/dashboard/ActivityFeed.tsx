@@ -6,7 +6,7 @@ import { formatDuration, formatTime } from "@/lib/format";
 import { describeActivity } from "@/lib/metrics";
 
 const STATE_STYLES: Record<AiState, { label: string; className: string }> = {
-  working: { label: "Çalışıyor", className: "bg-brand-soft text-brand-deep" },
+  working: { label: "Çalışıyor", className: "bg-brand text-on-brand" },
   idle: { label: "Beklemede", className: "bg-line-soft text-ink-soft" },
   stalled: { label: "Takıldı", className: "bg-accent-soft text-accent" },
   error: { label: "Hata", className: "bg-danger-soft text-danger" },

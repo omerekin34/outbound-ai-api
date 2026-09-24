@@ -419,3 +419,8 @@ class HealthResponse(BaseModel):
     database: Literal["up", "down"]
     database_host: str
     version: str
+
+
+class PipelineStatusOut(BaseModel):
+    paused: bool
+    pending_jobs: int

@@ -47,7 +47,7 @@ export function CompanyDetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/40 px-4 py-10"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/55 px-4 py-10"
       role="presentation"
       onClick={onClose}
     >
@@ -277,7 +277,7 @@ function ContactOutreachEditor({
           type="button"
           onClick={() => void handleSave()}
           disabled={saving}
-          className="rounded-lg bg-ink px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-brand-deep disabled:opacity-50"
+          className="rounded-lg bg-brand px-3 py-1.5 text-[12px] font-medium text-on-brand transition-colors hover:bg-brand-light disabled:opacity-50"
         >
           {saving ? "Kaydediliyor…" : saved ? "Kaydedildi" : "Taslağı kaydet"}
         </button>

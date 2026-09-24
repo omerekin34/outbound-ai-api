@@ -37,15 +37,21 @@ def get_dashboard_stats(
         le=50,
         description="Dönecek aktivite kaydı sayısı.",
     ),
+    days: int = Query(
+        default=7,
+        ge=1,
+        le=30,
+        description="Günlük serinin gün sayısı (1–30).",
+    ),
 ) -> DashboardStatsResponse:
     """Tek istekte dashboard'un tamamını besleyen özet veriyi döndürür."""
     limit = activity_limit or settings.dashboard_activity_limit
     try:
-        return build_dashboard_stats(db, limit)
+        return build_dashboard_stats(db, limit, days=days)
     except SQLAlchemyError as exc:
         logger.exception("Dashboard istatistikleri hesaplanamadı; boş özet dönülüyor")
         db.rollback()
-        return empty_dashboard_stats()
+        return empty_dashboard_stats(days=days)
 
 
 @router.get(

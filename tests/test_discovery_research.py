@@ -136,3 +136,15 @@ def test_scrape_timeout_marks_company_timeout(db_sessionmaker, monkeypatch) -> N
 
     assert stored is not None
     assert stored.status == STATUS_TIMEOUT
+
+
+def test_pipeline_pause_and_resume_endpoints(client: TestClient) -> None:
+    try:
+        paused = client.post("/api/pipeline/pause")
+        assert paused.status_code == 200
+        assert paused.json()["paused"] is True
+        assert client.get("/api/pipeline").json()["paused"] is True
+    finally:
+        resumed = client.post("/api/pipeline/resume")
+        assert resumed.status_code == 200
+        assert resumed.json()["paused"] is False

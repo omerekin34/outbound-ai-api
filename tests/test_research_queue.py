@@ -70,3 +70,23 @@ def test_worker_survives_a_failed_job() -> None:
     queue.join(timeout=3)
 
     assert ran == ["boom", "ok"]
+
+
+def test_pause_holds_jobs_until_resume() -> None:
+    ran: list[str] = []
+
+    def runner(company_id: str, _website: str) -> None:
+        ran.append(company_id)
+
+    queue = ResearchQueue(runner=runner, sleeper=lambda _s: None, gap_seconds=0)
+    queue.pause()
+    queue.enqueue("held", "https://held.example")
+    time.sleep(0.15)
+    assert ran == []
+    assert queue.is_paused is True
+    assert queue.snapshot()["pending_jobs"] == 1
+
+    queue.resume()
+    queue.join(timeout=3)
+    assert ran == ["held"]
+    assert queue.is_paused is False

@@ -1,7 +1,7 @@
 "use client";
 
 import { Mail, UserRound } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CompanyDetailModal } from "@/components/companies/CompanyDetailModal";
 import { EmailStatusBadge } from "@/components/companies/EmailStatusBadge";
@@ -29,12 +29,25 @@ export function CompanyPipelineTable({
   items,
   emptyMessage = "Henüz şirket yok. Keşif veya n8n bir domain gönderdiğinde burada görünür.",
   onRefresh,
+  openCompanyId = null,
+  onOpenCompanyChange,
 }: {
   items: CompanyRow[];
   emptyMessage?: string;
   onRefresh?: () => void;
+  openCompanyId?: string | null;
+  onOpenCompanyChange?: (id: string | null) => void;
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(openCompanyId);
+
+  useEffect(() => {
+    setSelectedId(openCompanyId);
+  }, [openCompanyId]);
+
+  function selectCompany(id: string | null) {
+    setSelectedId(id);
+    onOpenCompanyChange?.(id);
+  }
   const [edits, setEdits] = useState<Record<string, CompanyContact>>({});
   const rows = items.map((company) => ({
     ...company,
@@ -73,11 +86,11 @@ export function CompanyPipelineTable({
                 <tr
                   key={company.id}
                   className="cursor-pointer border-b border-line-soft align-top hover:bg-canvas"
-                  onClick={() => setSelectedId(company.id)}
+                  onClick={() => selectCompany(company.id)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      setSelectedId(company.id);
+                      selectCompany(company.id);
                     }
                   }}
                   tabIndex={0}
@@ -174,7 +187,7 @@ export function CompanyPipelineTable({
     {selected ? (
       <CompanyDetailModal
         company={selected}
-        onClose={() => setSelectedId(null)}
+        onClose={() => selectCompany(null)}
         onContactSaved={(contact) => {
           setEdits((current) => ({ ...current, [contact.id]: contact }));
           onRefresh?.();

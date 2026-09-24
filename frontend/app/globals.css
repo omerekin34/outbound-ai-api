@@ -1,37 +1,49 @@
 @import "tailwindcss";
 
-/* Revenue dashboard tasarım paleti: sıcak krem zemin + koyu yeşil vurgu. */
+/* Koyu operasyon paleti: lacivert zemin + altın vurgu. */
 @theme {
-  --color-canvas: #faf9f6;
-  --color-sidebar: #f3f2ec;
-  --color-surface: #ffffff;
+  --color-canvas: #0b1018;
+  --color-sidebar: #0e1520;
+  --color-surface: #151c28;
 
-  --color-ink: #16241f;
-  --color-ink-soft: #5d6b65;
-  --color-ink-muted: #8d9792;
+  --color-ink: #eef2f7;
+  --color-ink-soft: #9aa8b8;
+  --color-ink-muted: #6b7a8d;
 
-  --color-line: #e7e4dc;
-  --color-line-soft: #efece5;
+  --color-line: #273140;
+  --color-line-soft: #1c2430;
 
-  --color-brand: #1c7a62;
-  --color-brand-soft: #d7ebe2;
-  --color-brand-deep: #123d31;
-  --color-brand-light: #8cc9b4;
+  --color-brand: #e4c15a;
+  --color-brand-soft: #2a2414;
+  --color-brand-deep: #c9a227;
+  --color-brand-light: #f0d57a;
+  --color-on-brand: #12161e;
 
-  --color-accent: #9c6f12;
-  --color-accent-soft: #fbf2df;
-  --color-accent-line: #f0e2c4;
+  --color-accent: #e4c15a;
+  --color-accent-soft: #2a2414;
+  --color-accent-line: #4a3f1c;
 
-  --color-danger: #c0442a;
-  --color-danger-soft: #fbeae4;
+  --color-success: #4fd2a0;
+  --color-success-soft: #143024;
+  --color-success-deep: #2f9e74;
+
+  --color-danger: #e85d4c;
+  --color-danger-soft: #3a1814;
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 
   --radius-card: 16px;
 }
 
+html {
+  color-scheme: dark;
+}
+
 body {
   background-color: var(--color-canvas);
+  background-image:
+    radial-gradient(1100px 520px at -8% 12%, rgba(228, 193, 90, 0.09), transparent 55%),
+    radial-gradient(800px 400px at 110% -10%, rgba(80, 110, 160, 0.08), transparent 50%);
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
 }

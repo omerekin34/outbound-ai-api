@@ -70,7 +70,7 @@ export function ConnectionError({
         <button
           type="button"
           onClick={onRetry}
-          className="mt-1 rounded-lg bg-ink px-3.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-brand-deep"
+          className="mt-1 rounded-lg bg-brand px-3.5 py-1.5 text-[12px] font-medium text-on-brand transition-colors hover:bg-brand-light"
         >
           Tekrar dene
         </button>

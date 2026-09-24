@@ -19,7 +19,7 @@ export function SalesFlow({ stages }: { stages: FunnelStage[] }) {
           return (
             <li
               key={stage.key}
-              className={`flex-1 py-2.5 ${isFirst ? "bg-brand-soft pl-4" : "bg-line-soft"}`}
+              className={`flex-1 py-2.5 ${isFirst ? "bg-brand pl-4" : "bg-line-soft"}`}
               style={{
                 clipPath: isFirst
                   ? `polygon(0 0, calc(100% - ${POINT}px) 0, 100% 50%, calc(100% - ${POINT}px) 100%, 0 100%)`
@@ -29,13 +29,13 @@ export function SalesFlow({ stages }: { stages: FunnelStage[] }) {
               }}
             >
               <p
-                className={`text-[11px] ${isFirst ? "text-brand-deep" : "text-ink-soft"}`}
+                className={`text-[11px] ${isFirst ? "text-on-brand/80" : "text-ink-soft"}`}
               >
                 {stage.label}
               </p>
               <p
                 className={`tabular text-[20px] leading-tight font-semibold tracking-tight ${
-                  isFirst ? "text-brand-deep" : "text-ink"
+                  isFirst ? "text-on-brand" : "text-ink"
                 }`}
               >
                 {formatNumber(stage.value)}

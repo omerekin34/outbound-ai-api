@@ -25,7 +25,11 @@ export function DiscoveryView() {
     setToast(null);
     try {
       const accepted = await startResearch(value);
-      setToast(accepted.message || "Research started in the background");
+      setToast(
+        accepted.domain
+          ? `${accepted.domain} keşif kuyruğuna alındı.`
+          : "Keşif arka planda başladı.",
+      );
       setDomain("");
     } catch (cause) {
       setError(
@@ -71,14 +75,14 @@ export function DiscoveryView() {
           <button
             type="submit"
             disabled={isSubmitting || domain.trim() === ""}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-ink px-4 py-2.5 text-[13px] font-medium text-white transition-colors hover:bg-brand-deep disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-[13px] font-medium text-on-brand transition-colors hover:bg-brand-light disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isSubmitting ? (
               <RefreshCw className="size-4 animate-spin" strokeWidth={2} />
             ) : (
               <Search className="size-4" strokeWidth={2} />
             )}
-            Start Research
+            {isSubmitting ? "Başlatılıyor…" : "Keşfi başlat"}
           </button>
         </form>
 

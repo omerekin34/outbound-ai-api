@@ -6,9 +6,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy.orm import Session
 
 from api.database import get_db
-from api.schemas import DomainResearchRequest, ResearchAcceptedOut
+from api.schemas import DomainResearchRequest, PipelineStatusOut, ResearchAcceptedOut
 from api.services import research_job
-from api.services.research_queue import enqueue_research_job
+from api.services.research_queue import (
+    enqueue_research_job,
+    pause_pipeline,
+    pipeline_snapshot,
+    resume_pipeline,
+)
 
 router = APIRouter(tags=["research"])
 
@@ -41,3 +46,30 @@ def start_research(
         website=website,
         company_id=company.id,
     )
+
+
+@router.get(
+    "/pipeline",
+    response_model=PipelineStatusOut,
+    summary="Keşif kuyruğunun duraklatma durumu",
+)
+def get_pipeline_status() -> PipelineStatusOut:
+    return PipelineStatusOut.model_validate(pipeline_snapshot())
+
+
+@router.post(
+    "/pipeline/pause",
+    response_model=PipelineStatusOut,
+    summary="Keşif kuyruğunu duraklat",
+)
+def pause_research_pipeline() -> PipelineStatusOut:
+    return PipelineStatusOut.model_validate(pause_pipeline())
+
+
+@router.post(
+    "/pipeline/resume",
+    response_model=PipelineStatusOut,
+    summary="Keşif kuyruğunu devam ettir",
+)
+def resume_research_pipeline() -> PipelineStatusOut:
+    return PipelineStatusOut.model_validate(resume_pipeline())

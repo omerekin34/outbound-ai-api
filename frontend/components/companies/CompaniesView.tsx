@@ -2,7 +2,7 @@
 
 import { Building2, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CompanyPipelineTable } from "@/components/companies/CompanyPipelineTable";
 import { SearchInput } from "@/components/replies/SearchInput";
@@ -30,8 +30,10 @@ export function CompaniesView({
   const pathname = usePathname();
   const filter = (searchParams.get("filter") ?? "").trim().toLowerCase();
   const qualifiedOnly = QUALIFIED_FILTERS.has(filter);
+  const queryFromUrl = searchParams.get("q") ?? "";
+  const openCompanyId = searchParams.get("company");
 
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(queryFromUrl);
   const { data, error, isLoading, isRefreshing, refresh } = useCompanies({
     limit: 50,
     offset: 0,
@@ -39,15 +41,38 @@ export function CompaniesView({
     qualifiedOnly,
   });
 
-  function setQualifiedFilter(enabled: boolean) {
+  useEffect(() => {
+    setSearch(queryFromUrl);
+  }, [queryFromUrl]);
+
+  function replaceParams(mutate: (params: URLSearchParams) => void) {
     const params = new URLSearchParams(searchParams.toString());
-    if (enabled) {
-      params.set("filter", "qualified");
-    } else {
-      params.delete("filter");
-    }
+    mutate(params);
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }
+
+  function setSearchQuery(value: string) {
+    setSearch(value);
+    replaceParams((params) => {
+      const trimmed = value.trim();
+      if (trimmed) params.set("q", trimmed);
+      else params.delete("q");
+    });
+  }
+
+  function setOpenCompany(id: string | null) {
+    replaceParams((params) => {
+      if (id) params.set("company", id);
+      else params.delete("company");
+    });
+  }
+
+  function setQualifiedFilter(enabled: boolean) {
+    replaceParams((params) => {
+      if (enabled) params.set("filter", "qualified");
+      else params.delete("filter");
+    });
   }
 
   return (
@@ -60,7 +85,7 @@ export function CompaniesView({
       >
         <SearchInput
           value={search}
-          onChange={setSearch}
+          onChange={setSearchQuery}
           placeholder="Şirket veya domain ara"
         />
       </PageHeader>
@@ -116,7 +141,12 @@ export function CompaniesView({
               }
             />
           ) : (
-            <CompanyPipelineTable items={data.items} onRefresh={refresh} />
+            <CompanyPipelineTable
+              items={data.items}
+              onRefresh={refresh}
+              openCompanyId={openCompanyId}
+              onOpenCompanyChange={setOpenCompany}
+            />
           )}
         </>
       ) : null}
@@ -140,7 +170,7 @@ function FilterChip({
       aria-pressed={isActive}
       className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
         isActive
-          ? "border-ink bg-ink text-white"
+          ? "border-brand bg-brand text-on-brand"
           : "border-line bg-surface text-ink-soft hover:border-brand hover:text-brand"
       }`}
     >

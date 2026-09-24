@@ -229,12 +229,12 @@ function FilterChip({
       aria-pressed={isActive}
       className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
         isActive
-          ? "border-ink bg-ink text-white"
+          ? "border-brand bg-brand text-on-brand"
           : (tone ?? "border-line bg-surface text-ink-soft hover:border-brand hover:text-brand")
       }`}
     >
       {label}
-      <span className={`tabular ${isActive ? "text-white/70" : "opacity-60"}`}>
+      <span className={`tabular ${isActive ? "text-on-brand/70" : "opacity-60"}`}>
         {formatNumber(count)}
       </span>
     </button>

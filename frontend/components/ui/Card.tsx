@@ -3,13 +3,15 @@ import type { ReactNode } from "react";
 interface CardProps {
   children: ReactNode;
   className?: string;
+  id?: string;
 }
 
 /** Tasarımdaki beyaz, ince kenarlıklı panel. */
-export function Card({ children, className = "" }: CardProps) {
+export function Card({ children, className = "", id }: CardProps) {
   return (
     <section
-      className={`rounded-card border border-line bg-surface shadow-[0_1px_2px_rgba(22,36,31,0.04)] ${className}`}
+      id={id}
+      className={`rounded-card border border-line bg-surface shadow-[0_12px_32px_rgba(0,0,0,0.28)] ${className}`}
     >
       {children}
     </section>

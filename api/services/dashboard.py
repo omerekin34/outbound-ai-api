@@ -68,6 +68,13 @@ def _naive_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=None)
 
 
+def _day_window(now: datetime, day_count: int) -> list:
+    """Bugün dahil, `day_count` takvim günü (1–30)."""
+    today = now.date()
+    count = max(1, min(int(day_count), 30))
+    return [today - timedelta(days=offset) for offset in range(count - 1, -1, -1)]
+
+
 def empty_company_stats() -> DashboardStats:
     """Boş veritabanı / okuma hatası için sıfırlı sayaçlar."""
     return DashboardStats(
@@ -87,9 +94,7 @@ def empty_company_stats() -> DashboardStats:
     )
 
 
-def _empty_daily(now: datetime) -> list[DailyCount]:
-    today = now.date()
-    days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
+def _empty_daily(now: datetime, days: int = 7) -> list[DailyCount]:
     return [
         DailyCount(
             date=day.isoformat(),
@@ -97,11 +102,11 @@ def _empty_daily(now: datetime) -> list[DailyCount]:
             analyzed=0,
             positive_replies=0,
         )
-        for day in days
+        for day in _day_window(now, days)
     ]
 
 
-def empty_dashboard_stats() -> DashboardStatsResponse:
+def empty_dashboard_stats(days: int = 7) -> DashboardStatsResponse:
     now = _utc_now()
     return DashboardStatsResponse(
         generated_at=now,
@@ -109,7 +114,7 @@ def empty_dashboard_stats() -> DashboardStatsResponse:
         ai_status=build_ai_status([], now),
         status_breakdown=[],
         top_industries=[],
-        daily=_empty_daily(now),
+        daily=_empty_daily(now, days),
     )
 
 
@@ -207,11 +212,10 @@ def _as_day_key(value: object) -> str:
     return text[:10]
 
 
-def _daily_counts(db: Session, now: datetime) -> list[DailyCount]:
-    """Son 7 gün: gerçek skor ve olumlu yanıt adedi. Veri yoksa 0."""
-    today = now.date()
-    days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
-    window_start = datetime.combine(days[0], datetime.min.time())
+def _daily_counts(db: Session, now: datetime, days: int = 7) -> list[DailyCount]:
+    """Seçilen pencerede gerçek skor ve olumlu yanıt adedi. Veri yoksa 0."""
+    window = _day_window(now, days)
+    window_start = datetime.combine(window[0], datetime.min.time())
 
     analyzed_map: dict[str, int] = {}
     try:
@@ -246,7 +250,7 @@ def _daily_counts(db: Session, now: datetime) -> list[DailyCount]:
             analyzed=analyzed_map.get(day.isoformat(), 0),
             positive_replies=reply_map.get(day.isoformat(), 0),
         )
-        for day in days
+        for day in window
     ]
 
 
@@ -342,7 +346,9 @@ def build_ai_status(activities: list[ActivityOut], now: datetime) -> AiStatus:
     )
 
 
-def build_dashboard_stats(db: Session, activity_limit: int) -> DashboardStatsResponse:
+def build_dashboard_stats(
+    db: Session, activity_limit: int, *, days: int = 7
+) -> DashboardStatsResponse:
     now = _utc_now()
     activities = fetch_recent_activity(db, activity_limit)
 
@@ -373,5 +379,5 @@ def build_dashboard_stats(db: Session, activity_limit: int) -> DashboardStatsRes
         ai_status=build_ai_status(activities, now),
         status_breakdown=breakdown,
         top_industries=industries,
-        daily=_daily_counts(db, now),
+        daily=_daily_counts(db, now, days),
     )

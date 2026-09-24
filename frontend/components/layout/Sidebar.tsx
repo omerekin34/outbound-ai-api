@@ -34,12 +34,12 @@ export function Sidebar() {
                   aria-current={isActive ? "page" : undefined}
                   className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition-colors ${
                     isActive
-                      ? "bg-brand-soft font-semibold text-brand-deep"
+                      ? "bg-brand font-semibold text-on-brand"
                       : "text-ink-soft hover:bg-line-soft hover:text-ink"
                   }`}
                 >
                   <Icon
-                    className={`size-4 ${isActive ? "text-brand" : "text-ink-muted"}`}
+                    className={`size-4 ${isActive ? "text-on-brand" : "text-ink-muted"}`}
                     strokeWidth={1.9}
                   />
                   {item.label}
@@ -51,7 +51,7 @@ export function Sidebar() {
       </nav>
 
       <div className="flex items-center gap-2.5 px-6 py-5">
-        <span className="flex size-7 items-center justify-center rounded-full bg-brand-deep text-[11px] font-semibold text-white">
+        <span className="flex size-7 items-center justify-center rounded-full bg-brand text-[11px] font-semibold text-on-brand">
           S
         </span>
         <div className="leading-tight">

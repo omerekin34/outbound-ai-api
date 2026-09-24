@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/Card";
 import { API_BASE_URL } from "@/lib/api";
 import { buildFunnelStages, buildMetricCards } from "@/lib/metrics";
 import { useCompanies } from "@/lib/useCompanies";
-import { useDashboardStats } from "@/lib/useDashboardStats";
+import { rangeLabel, useDashboardStats } from "@/lib/useDashboardStats";
 
 import { ActivityFeed } from "./ActivityFeed";
 import { BudgetCard } from "./BudgetCard";
@@ -18,16 +18,32 @@ import { ResponseChart } from "./ResponseChart";
 import { SalesFlow } from "./SalesFlow";
 
 export function DashboardOverview() {
-  const { data, error, isLoading, isRefreshing, lastUpdatedAt, refresh } =
-    useDashboardStats();
+  const {
+    data,
+    error,
+    isLoading,
+    isRefreshing,
+    lastUpdatedAt,
+    days,
+    setDays,
+    refresh,
+  } = useDashboardStats();
   const review = useCompanies({ limit: 10, status: "review" });
+
+  const refreshAll = () => {
+    refresh();
+    review.refresh();
+  };
 
   return (
     <div className="space-y-5">
       <DashboardHeader
         lastUpdatedAt={lastUpdatedAt}
         isRefreshing={isRefreshing}
-        onRefresh={refresh}
+        days={days}
+        daily={data?.daily ?? []}
+        onDaysChange={setDays}
+        onRefresh={refreshAll}
       />
 
       {/* Elimizde veri varken hata olursa panel boşaltılmaz; uyarı şeridi eklenir. */}
@@ -51,7 +67,10 @@ export function DashboardOverview() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.85fr)_minmax(0,1fr)]">
             <div className="space-y-4">
               <SalesFlow stages={buildFunnelStages(data)} />
-              <ResponseChart daily={data.daily ?? []} />
+              <ResponseChart
+                daily={data.daily ?? []}
+                title={rangeLabel(days)}
+              />
             </div>
 
             <DecisionList companies={review.data?.items ?? []} />
@@ -92,7 +111,7 @@ function ConnectionError({
         <button
           type="button"
           onClick={onRetry}
-          className="mt-1 rounded-lg bg-ink px-3.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-brand-deep"
+          className="mt-1 rounded-lg bg-brand px-3.5 py-1.5 text-[12px] font-medium text-on-brand transition-colors hover:bg-brand-light"
         >
           Tekrar dene
         </button>
