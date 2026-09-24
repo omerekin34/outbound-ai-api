@@ -29,9 +29,19 @@ logger = logging.getLogger(__name__)
 
 APOLLO_BASE = "https://api.apollo.io/api/v1"
 _ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
-# Resmi People Search; 403 olursa eski `search`, sonra kayıtlı `contacts/search`.
-PEOPLE_SEARCH_PATHS = ("/mixed_people/api_search", "/mixed_people/search")
+# Resmi People Search; 403 olursa eski path'ler, sonra kayıtlı `contacts/search`.
+PEOPLE_SEARCH_PATHS = (
+    "/mixed_people/api_search",
+    "/mixed_people/search",
+    "/people/search",
+)
 CONTACTS_SEARCH_PATH = "/contacts/search"
+PLAN_BLOCKED_MARKERS = (
+    "basic (trial)",
+    "not included in your",
+    "api_inaccessible",
+    "not accessible, even with a master key",
+)
 PEOPLE_ENRICH_PATH = "/people/bulk_match"
 CONTACT_ID_PREFIX = "apollo-"
 
@@ -174,6 +184,21 @@ def _person_from_payload(raw: dict[str, Any]) -> ApolloPerson | None:
 
 class ApolloSearchError(RuntimeError):
     """Apollo People Search reddedildi — anahtar, kapsam veya plan."""
+
+
+class ApolloPlanBlocked(ApolloSearchError):
+    """People Search bu Apollo planında yok."""
+
+
+def is_apollo_plan_blocked(text: str | None) -> bool:
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in PLAN_BLOCKED_MARKERS)
+
+
+def user_facing_apollo_message(exc: BaseException) -> str:
+    if is_apollo_plan_blocked(str(exc)) or isinstance(exc, ApolloPlanBlocked):
+        return "Apollo People Search bu planda yok; kayıtlı kişi bulunamadı."
+    return f"Apollo araması başarısız: {exc}"
 
 
 def _clean_api_key(raw: str) -> str:
@@ -340,23 +365,33 @@ class ApolloClient:
         }
 
     def search_people(self, domain: str, per_page: int) -> list[dict[str, Any]]:
-        body = self._search_body(domain, per_page)
+        people_body = self._search_body(domain, per_page)
         last_error: httpx.HTTPStatusError | None = None
+        plan_blocked = False
         for path in PEOPLE_SEARCH_PATHS:
             try:
                 return _people_from_payload(
-                    self._request("POST", path, json_body=body)
+                    self._request("POST", path, json_body=people_body)
                 )
             except httpx.HTTPStatusError as exc:
                 last_error = exc
                 status = exc.response.status_code if exc.response is not None else 0
                 if status in {401, 403}:
+                    if status == 403 and is_apollo_plan_blocked(
+                        _response_error_text(exc.response)
+                    ):
+                        plan_blocked = True
                     continue
                 raise
 
+        contacts_body = {
+            "q_keywords": domain,
+            "page": 1,
+            "per_page": max(1, min(per_page, 100)),
+        }
         try:
             saved = _people_from_payload(
-                self._request("POST", CONTACTS_SEARCH_PATH, json_body=body)
+                self._request("POST", CONTACTS_SEARCH_PATH, json_body=contacts_body)
             )
             if saved:
                 logger.info(
@@ -366,7 +401,19 @@ class ApolloClient:
                 return saved
         except httpx.HTTPError as exc:
             logger.warning("Apollo contacts/search başarısız: %s", exc)
+            if plan_blocked:
+                raise ApolloPlanBlocked(
+                    "Apollo People Search bu planda yok; kayıtlı kişi bulunamadı."
+                ) from last_error
+            if last_error is not None:
+                detail = _response_error_text(last_error.response) or str(last_error)
+                raise ApolloSearchError(detail) from last_error
+            raise
 
+        if plan_blocked:
+            raise ApolloPlanBlocked(
+                "Apollo People Search bu planda yok; kayıtlı kişi bulunamadı."
+            )
         if last_error is not None:
             detail = _response_error_text(last_error.response) or str(last_error)
             raise ApolloSearchError(detail) from last_error
@@ -514,9 +561,20 @@ def find_decision_makers(
     ) as activity:
         try:
             people = resolved.search_decision_makers(domain)
+        except ApolloPlanBlocked as exc:
+            logger.info("Apollo planı People Search içermiyor: %s (%s)", company.name, domain)
+            activity.skip(user_facing_apollo_message(exc))
+            return 0
+        except ApolloSearchError as exc:
+            logger.warning("Apollo araması reddedildi: %s (%s) %s", company.name, domain, exc)
+            if is_apollo_plan_blocked(str(exc)):
+                activity.skip(user_facing_apollo_message(exc))
+            else:
+                activity.fail(user_facing_apollo_message(exc))
+            return 0
         except Exception as exc:
             logger.exception("Apollo araması başarısız: %s (%s)", company.name, domain)
-            activity.fail(f"Apollo araması başarısız: {exc}")
+            activity.fail(user_facing_apollo_message(exc))
             return 0
 
         written = persist_apollo_contacts(db, company, people)

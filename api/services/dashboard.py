@@ -33,6 +33,7 @@ from api.schemas import (
     IndustryCount,
     StatusCount,
 )
+from api.services.apollo import is_apollo_plan_blocked
 from api.services.inbox import count_positive_replies
 from api.services.scoring import (
     DEEP_RESEARCH_STATUSES,
@@ -273,7 +274,20 @@ def fetch_recent_activity(db: Session, limit: int) -> list[ActivityOut]:
         db.rollback()
         logger.warning("Aktivite kayıtları okunamadı: %s", exc)
         return []
-    return [ActivityOut.model_validate(log) for log in logs]
+    presented: list[ActivityOut] = []
+    for log in logs:
+        item = ActivityOut.model_validate(log)
+        if item.status == "failed" and is_apollo_plan_blocked(item.message):
+            item = item.model_copy(
+                update={
+                    "status": "skipped",
+                    "message": (
+                        "Apollo People Search bu planda yok; kayıtlı kişi bulunamadı."
+                    ),
+                }
+            )
+        presented.append(item)
+    return presented
 
 
 def _describe(activity: ActivityOut) -> str:

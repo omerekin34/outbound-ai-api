@@ -564,6 +564,7 @@ def _request_analysis(company_name: str, user_content: str) -> dict[str, Any]:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="AI beklenmeyen bir formatta yanıt verdi.",
         )
+    parsed.pop("scores", None)
     return parsed
 
 
@@ -607,6 +608,8 @@ def assemble_analysis(
     default_url: str | None,
 ) -> dict[str, Any]:
     """Profil + kanıtlı fact'leri birleştirir; LLM skorunu yok sayar."""
+    payload = dict(payload)
+    payload.pop("scores", None)
     facts = _merge_facts(
         profile_to_facts(payload, allowed_urls, default_url),
         _normalize_facts(payload, allowed_urls, default_url),

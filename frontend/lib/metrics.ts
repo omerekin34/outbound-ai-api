@@ -42,6 +42,7 @@ export function buildMetricCards(data: DashboardStatsResponse): MetricCard[] {
       delta: stats.companies_added_last_7_days,
       caption: "AI analizi tamamlanan",
       provisional: false,
+      href: "/sirketler",
     },
     {
       key: "suitable",

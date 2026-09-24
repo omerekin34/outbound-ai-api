@@ -97,6 +97,11 @@ def test_llm_scores_in_payload_are_not_returned() -> None:
     }
     facts = _normalize_facts(payload, set(), None)
     assert len(facts) == 1
+    assembled = assemble_analysis(payload, set(), None)
+    assert "scores" not in assembled
+    backend = calculate_scores(assembled["facts"])
+    assert backend.overall_score != pytest.approx(99)
+    assert backend.icp_score != pytest.approx(100)
 
 
 # --- Step 4–8: yapılandırılmış analyzer profili ----------------------------

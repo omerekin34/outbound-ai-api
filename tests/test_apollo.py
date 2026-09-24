@@ -436,6 +436,7 @@ def test_apollo_search_uses_saved_contacts_when_people_api_blocked(monkeypatch) 
 
     def fake_request(self, method, path, *, json_body=None):
         if path == "/contacts/search":
+            assert json_body["q_keywords"] == "ornek.com"
             return {"contacts": [{"id": "c1", "first_name": "Ada", "title": "CEO"}]}
         raise _apollo_http_error(
             403, {"error": "The api is not included in your Basic (Trial) plan"}
@@ -446,8 +447,29 @@ def test_apollo_search_uses_saved_contacts_when_people_api_blocked(monkeypatch) 
     assert people[0]["id"] == "c1"
 
 
+def test_apollo_search_skips_when_people_api_blocked_and_no_saved_contacts(
+    monkeypatch,
+) -> None:
+    from api.services.apollo import ApolloClient, ApolloPlanBlocked
+
+    def fake_request(self, method, path, *, json_body=None):
+        if path == "/contacts/search":
+            return {"contacts": []}
+        raise _apollo_http_error(
+            403, {"error": "The api is not included in your Basic (Trial) plan"}
+        )
+
+    monkeypatch.setattr(ApolloClient, "_request", fake_request)
+    try:
+        ApolloClient("k").search_people("ornek.com", 5)
+    except ApolloPlanBlocked as exc:
+        assert "planda yok" in str(exc)
+    else:
+        raise AssertionError("ApolloPlanBlocked bekleniyordu")
+
+
 def test_apollo_search_raises_plan_error_when_all_endpoints_forbidden(monkeypatch) -> None:
-    from api.services.apollo import ApolloClient, ApolloSearchError
+    from api.services.apollo import ApolloClient, ApolloPlanBlocked
 
     def fake_request(self, method, path, *, json_body=None):
         raise _apollo_http_error(
@@ -457,10 +479,35 @@ def test_apollo_search_raises_plan_error_when_all_endpoints_forbidden(monkeypatc
     monkeypatch.setattr(ApolloClient, "_request", fake_request)
     try:
         ApolloClient("k").search_people("ornek.com", 5)
-    except ApolloSearchError as exc:
-        assert "Basic (Trial)" in str(exc)
+    except ApolloPlanBlocked as exc:
+        assert "planda yok" in str(exc)
     else:
-        raise AssertionError("ApolloSearchError bekleniyordu")
+        raise AssertionError("ApolloPlanBlocked bekleniyordu")
+
+
+def test_find_decision_makers_skips_when_plan_blocked(db_sessionmaker) -> None:
+    from api.services.apollo import ApolloPlanBlocked
+
+    class Blocked:
+        def search_decision_makers(self, domain: str) -> list:
+            raise ApolloPlanBlocked(
+                "Apollo People Search bu planda yok; kayıtlı kişi bulunamadı."
+            )
+
+    with db_sessionmaker() as session:
+        company = _company()
+        session.add(company)
+        session.commit()
+        saved = find_decision_makers(session, company, client=Blocked())
+        session.commit()
+        log = session.execute(
+            select(models.ActivityLog).order_by(models.ActivityLog.id.desc())
+        ).scalars().first()
+
+    assert saved == 0
+    assert log is not None
+    assert log.status == "skipped"
+    assert "planda yok" in log.message
 
 
 def test_select_primary_contact_picks_highest_rank() -> None:
